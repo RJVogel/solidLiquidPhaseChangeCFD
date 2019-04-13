@@ -2,9 +2,9 @@
 """
 Created on Sun Apr 24 11:20:40 2016
 
-@author: Julian Vogel (AkaDrBird)
+@author: jvogel
 
-Navier Stokes solver for lid driven cavity flow
+Enthalpy-Porosity Phase Change Simulation
 """
 
 import time
@@ -69,22 +69,49 @@ def animateContoursAndVelocityVectors():
     ax1.set_xlabel('x')
     ax1.set_ylabel('y')
     # Filled contours for pressure
-    N = 41
+    N = 50
     ctf1 = ax1.contourf(X, Y, p, N, alpha=1, linestyles=None, cmap='seismic')
     # Colorbar
     cBar1 = fig.colorbar(ctf1)
     cBar1.set_label('p / Pa')
     # Velocity vectors
     m = 1
-    ax1.quiver(X[::m, ::m],
-               Y[::m, ::m],
-               u[::m, ::m],
-               v[::m, ::m])
+    ax1.quiver(X[::m, ::m], Y[::m, ::m], u[::m, ::m], v[::m, ::m])
 
     plt.tight_layout()
 
 
-def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu, uWall, vWall):
+def setVelocityBoundaries(u, v, uWall, vWall):
+
+    # West
+    u[:, 0] = uWall[0]
+    if np.isnan(vWall[0]):
+        v[:, 0] = v[:, 1]  # symmetry
+    else:
+        v[:, 0] = vWall[0]
+    # East
+    u[:, -1] = uWall[1]
+    if np.isnan(vWall[1]):
+        v[:, -1] = v[:, -2]  # symmetry
+    else:
+        v[:, -1] = vWall[1]
+    # South
+    if np.isnan(uWall[2]):
+        u[0, :] = u[1, :]  # symmetry
+    else:
+        u[0, :] = uWall[2]  # symmetry
+    v[0, :] = vWall[2]
+    # North
+    if np.isnan(uWall[3]):
+        u[-1, :] = u[-2, :]  # symmetry
+    else:
+        u[-1, :] = uWall[3]
+    v[-1, :] = vWall[3]
+
+    return u, v
+
+
+def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu):
 
     # Solve u-velocity
     Qu = -dt/(dx)*((np.maximum(un[1:-1, 1:-1], 0)*un[1:-1, 1:-1] +
@@ -113,32 +140,6 @@ def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu, uWall, vWall):
             dt/dx**2*(vn[1:-1, 2:]-2*vn[1:-1, 1:-1]+vn[1:-1, 0:-2]) +
             dt/dy**2*(vn[2:, 1:-1]-2*vn[1:-1, 1:-1]+vn[0:-2, 1:-1]))
     v[1:-1, 1:-1] = vn[1:-1, 1:-1] + Qv
-
-    # Boundary conditions
-    # West
-    u[:, 0] = uWall[0]
-    if np.isnan(vWall[0]):
-        v[:, 0] = v[:, 1]  # symmetry
-    else:
-        v[:, 0] = vWall[0]
-    # East
-    u[:, -1] = uWall[1]
-    if np.isnan(vWall[1]):
-        v[:, -1] = v[:, -2]  # symmetry
-    else:
-        v[:, -1] = vWall[1]
-    # South
-    if np.isnan(uWall[2]):
-        u[0, :] = u[1, :]  # symmetry
-    else:
-        u[0, :] = uWall[2]  # symmetry
-    v[0, :] = vWall[2]
-    # North
-    if np.isnan(uWall[3]):
-        u[-1, :] = u[-2, :]  # symmetry
-    else:
-        u[-1, :] = uWall[3]
-    v[-1, :] = vWall[3]
 
     return u, v
 
@@ -188,38 +189,12 @@ def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
     return p
 
 
-def solvePressureCorrection(u, v, p, rho, dt, dx, dy, uWall, vWall):
+def correctPressure(u, v, p, rho, dt, dx, dy):
 
     u[1:-1, 1:-1] = u[1:-1, 1:-1] - 1/rho*dt * \
         (p[1:-1, 2:]-p[1:-1, 0:-2])/(2*dx)
     v[1:-1, 1:-1] = v[1:-1, 1:-1] - 1/rho*dt * \
         (p[2:, 1:-1]-p[0:-2, 1:-1])/(2*dy)
-
-    # Boundary conditions
-    # West
-    u[:, 0] = uWall[0]
-    if np.isnan(vWall[0]):
-        v[:, 0] = v[:, 1]  # symmetry
-    else:
-        v[:, 0] = vWall[0]
-    # East
-    u[:, -1] = uWall[1]
-    if np.isnan(vWall[1]):
-        v[:, -1] = v[:, -2]  # symmetry
-    else:
-        v[:, -1] = vWall[1]
-    # South
-    if np.isnan(uWall[2]):
-        u[0, :] = u[1, :]  # symmetry
-    else:
-        u[0, :] = uWall[2]  # symmetry
-    v[0, :] = vWall[2]
-    # North
-    if np.isnan(uWall[3]):
-        u[-1, :] = u[-2, :]  # symmetry
-    else:
-        u[-1, :] = uWall[3]
-    v[-1, :] = vWall[3]
 
     return u, v
 
@@ -248,11 +223,15 @@ while t < tMax:
 
     # Momentum equation with projection method
     # Intermediate velocity field u*
-    [u, v] = solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu, uWall, vWall)
+    [u, v] = solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu)
+    # Set velocity boundaries
+    [u, v] = setVelocityBoundaries(u, v, uWall, vWall)
     # Poisson equation
     p = solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall)
     # Pressure correction
-    [u, v] = solvePressureCorrection(u, v, p, rho, dt, dx, dy, uWall, vWall)
+    [u, v] = correctPressure(u, v, p, rho, dt, dx, dy)
+    # Set velocity boundaries
+    [u, v] = setVelocityBoundaries(u, v, uWall, vWall)
 
     # Calculate derived quantities
     # Velocities
