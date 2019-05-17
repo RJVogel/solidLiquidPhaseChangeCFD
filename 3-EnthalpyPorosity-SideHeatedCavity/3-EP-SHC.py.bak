@@ -28,7 +28,7 @@ ymax = 0.1
 
 # Spatial discretization
 dx = 0.001
-dy = 0.004
+dy = 0.001
 
 # Initial conditions
 T0 = 27.
@@ -64,14 +64,15 @@ Cmush = 1e6
 
 # Temporal discretization
 tMax = 10800.
+dtVisc = min(dx**2/(2*nu), dy**2/(2*nu))
+dtThrm = min(dx**2/a, dy**2/a)
 sigma = 0.25
-
-# Solver settings
-poissonSolver = 'iterative'
+dt0 = sigma*min(dtVisc, dtThrm)
+dt0 = 0.01
 nit = 50  # iterations of pressure poisson equation
 
 # Visualization
-dtOut = 60.0  # output step length
+dtOut = 100.0  # output step length
 nOut = int(round(tMax/dtOut))
 figureSize = (10., 6.25)
 minContour1 = 27.
@@ -84,13 +85,6 @@ maxContour2 = 0.005
 colormap2 = 'jet'
 plotContourLevels2 = np.linspace(minContour2, maxContour2, num=21)
 ticks2 = np.linspace(minContour2, maxContour2, num=11)
-
-# Initial time step calculation
-dtVisc = min(dx**2/(2*nu), dy**2/(2*nu))  # Viscous time step
-dtThrm = min(dx**2/a, dy**2/a)  # Thermal time step
-dt0 = sigma*min(dtVisc, dtThrm)
-nsignifdigs = -np.floor(np.log10(abs(dtOut/dt0)))
-dt = dtOut/(np.ceil(dtOut/dt0*10**nsignifdigs)/(10**nsignifdigs))
 
 # Mesh generation
 nx = int((xmax-xmin)/dx)+1
@@ -154,11 +148,11 @@ def animateContoursAndVelocityVectors():
                  alpha=1, linestyles=None, cmap='gray')
     # plot velocity
     m = 1
-    qv = ax2.quiver(X,
-                    Y,
-                    u,
-                    v,
-                    U,
+    qv = ax2.quiver(X[::m, ::m][f[::m, ::m] > 0.1],
+                    Y[::m, ::m][f[::m, ::m] > 0.1],
+                    u[::m, ::m][f[::m, ::m] > 0.1],
+                    v[::m, ::m][f[::m, ::m] > 0.1],
+                    U[::m, ::m][f[::m, ::m] > 0.1],
                     clim=np.array([min(plotContourLevels2),
                                    max(plotContourLevels2)]),
                     cmap=colormap2)
@@ -178,7 +172,28 @@ def animateContoursAndVelocityVectors():
         plt.savefig(path)
 
 
-def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu, beta, T, Tref, g):
+def calcEnthalpyPorosity(T, Tm, dTm, L, c, Cmush):
+
+    # Calculate liquid phase fraction
+    f = (T-Tm)/dTm+0.5
+    f = np.minimum(f, 1)
+    f = np.maximum(f, 0)
+
+    # Find phase change cells
+    pc = np.logical_and(f > 0, f < 1)
+
+    # Set heat capacity modifier
+    cMod[pc] = 1+L/(c*dTm)
+    cMod[np.logical_not(pc)] = 1
+
+    # Velocity switch-off constant
+    q = 1e-3
+    B[1:-1, 1:-1] = Cmush*(1-f[1:-1, 1:-1])**2/(f[1:-1, 1:-1]**3+q)
+
+    return f, pc, cMod, B
+
+
+def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu, beta, T, Tref, g, B):
 
     # Solve u-velocity
     Qu = -dt/(dx)*((np.maximum(un[1:-1, 1:-1], 0)*un[1:-1, 1:-1] +
@@ -193,6 +208,9 @@ def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu, beta, T, Tref, g):
             dt/dx**2*(un[1:-1, 2:]-2*un[1:-1, 1:-1]+un[1:-1, 0:-2]) +
             dt/dy**2*(un[2:, 1:-1]-2*un[1:-1, 1:-1]+un[0:-2, 1:-1]))
     u[1:-1, 1:-1] = un[1:-1, 1:-1] + Qu
+
+    # Velocity switch off u
+    u[1:-1, 1:-1] = u[1:-1, 1:-1]/(1+dt*B[1:-1, 1:-1])
 
     # Solve v-velocity
     Qv = -dt/(dx)*((np.maximum(un[1:-1, 1:-1], 0)*vn[1:-1, 1:-1] +
@@ -209,20 +227,10 @@ def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu, beta, T, Tref, g):
     Sv = dt*beta*g*(T[1:-1, 1:-1]-Tref)
     v[1:-1, 1:-1] = vn[1:-1, 1:-1] + Qv + Sv
 
-    return u, v
-
-
-def calcVelocitySwitchOff(u, v, B, dt, f, Cmush):
-
-    # Velocity switch-off constant
-    q = 1e-3
-    B[1:-1, 1:-1] = Cmush*(1-f[1:-1, 1:-1])**2/(f[1:-1, 1:-1]**3+q)
-
-    # Velocity switch off
-    u[1:-1, 1:-1] = u[1:-1, 1:-1]/(1+dt*B[1:-1, 1:-1])
+    # Velocity switch off v
     v[1:-1, 1:-1] = v[1:-1, 1:-1]/(1+dt*B[1:-1, 1:-1])
 
-    return u, v, B
+    return u, v
 
 
 def setVelocityBoundaries(u, v, uWall, vWall):
@@ -255,7 +263,8 @@ def setVelocityBoundaries(u, v, uWall, vWall):
     return u, v
 
 
-def buildPoissonRightHandSide(b, rho, dt, u, v, dx, dy, beta, g, T):
+def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall,
+                         beta, g, T, solver, CP, CW, CE, CS, CN, A):
 
     # Right hand side
     b[1:-1, 1:-1] = rho*(
@@ -267,20 +276,7 @@ def buildPoissonRightHandSide(b, rho, dt, u, v, dx, dy, beta, g, T):
            ((v[2:, 1:-1] - v[0:-2, 1:-1])/(2*dy))**2)
         + beta*g*(T[2:, 1:-1] - T[0:-2, 1:-1])/(2*dy))
 
-    return b
-
-
-def solvePoissonEquation(p, b, dx, dy, nit, pWall, solver,
-                         CP, CW, CE, CS, CN, A, nx, ny):
-
     if solver == 'direct':
-
-        # Inner nodes
-        CP[1:-1, 1:-1] = 2*(1/dx**2+1/dy**2)
-        CW[1:-1, 1:-1] = -1/dx**2
-        CE[1:-1, 1:-1] = -1/dx**2
-        CS[1:-1, 1:-1] = -1/dy**2
-        CN[1:-1, 1:-1] = -1/dy**2
 
         # Boundary conditions
         CP[:, 0] = 1
@@ -297,6 +293,13 @@ def solvePoissonEquation(p, b, dx, dy, nit, pWall, solver,
         CE[-1, 0] = 0
         CS[[-1, -1], [0, -1]] = 0
         CN[[0, 0], [0, -1]] = -0.5
+
+        # Inner nodes
+        CP[1:-1, 1:-1] = 2*(1/dx**2+1/dy**2)
+        CW[1:-1, 1:-1] = -1/dx**2
+        CE[1:-1, 1:-1] = -1/dx**2
+        CS[1:-1, 1:-1] = -1/dy**2
+        CN[1:-1, 1:-1] = -1/dy**2
 
         A = sp.csr_matrix(sp.spdiags((CP.flat[:], CW.flat[:], CE.flat[:],
                                       CS.flat[:], CN.flat[:]),
@@ -351,23 +354,6 @@ def correctPressure(u, v, p, rho, dt, dx, dy, B):
     return u, v
 
 
-def calcEnthalpyPorosity(T, Tm, dTm, L, c):
-
-    # Calculate liquid phase fraction
-    f = (T-Tm)/dTm+0.5
-    f = np.minimum(f, 1)
-    f = np.maximum(f, 0)
-
-    # Find phase change cells
-    pc = np.logical_and(f > 0, f < 1)
-
-    # Set heat capacity modifier
-    cMod[pc] = 1+L/(c*dTm)
-    cMod[np.logical_not(pc)] = 1
-
-    return f, pc, cMod
-
-
 def solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, Twall, cMod):
 
     # Solve energy equation with modified heat capacity
@@ -418,6 +404,7 @@ twall0 = time.time()
 tOut = dtOut
 t = 0
 n = 0
+dt = dt0
 uMax = 0
 vMax = 0
 
@@ -426,13 +413,11 @@ while t < tMax:
     n += 1
 
     # Automatic time stepping
-    if np.logical_and(uMax > 0, vMax > 0):
-        dtConv = min(dx/uMax, dy/vMax)
-        dtVisCon = 1/(1/dtVisc+1/dtConv)
-        dt0 = sigma*min(dtThrm, dtVisCon)
-        nsigdigs = -np.floor(np.log10(abs(dtOut/dt0)))
-        dt = dtOut/(np.ceil(dtOut/dt0*10**nsigdigs)/(10**nsigdigs))
-        dt = min(dt, tOut-t)
+#    if np.logical_and(uMax > 0, vMax > 0):
+#        dtConv = min(dx/uMax, dy/vMax)
+#        dtVisCon = 1/(1/dtVisc+1/dtConv)
+#        dt0 = sigma*min(dtThrm, dtVisCon)
+#        dt = dt0
 
     t += dt
 
@@ -443,31 +428,25 @@ while t < tMax:
     fn = f.copy()
     Tn = T.copy()
 
+    # Enthalpy porosity method
+    [f, pc, cMod, B] = calcEnthalpyPorosity(T, Tm, dTm, L, c, Cmush)
+
     # Momentum equation with projection method
     # Intermediate velocity field u*
     [u, v] = solveMomentumEquation(u, v, un, vn, dt, dx, dy,
-                                   nu, beta, T, Tref, g)
-    # Switch off velocities at solid phase
-    [u, v, B] = calcVelocitySwitchOff(u, v, B, dt, f, Cmush)
-    # Set velocity boundaries
+                                   nu, beta, T, Tref, g, B)
     [u, v] = setVelocityBoundaries(u, v, uWall, vWall)
     # Pressure correction
-    b = buildPoissonRightHandSide(b, rho, dt, u, v, dx, dy, beta, g, T)
-    p = solvePoissonEquation(p, b, dx, dy, nit, pWall, poissonSolver,
-                             CP, CW, CE, CS, CN, A, nx, ny)
+    p = solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall,
+                             beta, g, T, 'iterative', CP, CW, CE, CS, CN, A)
     [u, v] = correctPressure(u, v, p, rho, dt, dx, dy, B)
-    # [u, v] = setVelocityBoundaries(u, v, uWall, vWall)
+    [u, v] = setVelocityBoundaries(u, v, uWall, vWall)
 
     # Energy equation
     T = solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, Twall, cMod)
 
-    # Enthalpy porosity method
-    [f, pc, cMod] = calcEnthalpyPorosity(T, Tm, dTm, L, c)
-
     # Output
     if (t-tOut) > -1e-6:
-
-        t = tOut
 
         # Calculate derived quantities
         # Velocities
@@ -478,8 +457,8 @@ while t < tMax:
         Pe_u = uMax*dx/nu
         Pe_v = vMax*dy/nu
         # Courant Friedrichs Levy numbers
-        CFL_u = uMax*dt/dx
-        CFL_v = vMax*dt/dy
+        CFL_u = uMax*dt0/dx
+        CFL_v = vMax*dt0/dy
         # Rayleigh numbers
         if np.any(f > 0):
             dTmaxLiq = np.max(T[f > 0])-np.min(T[f > 0])
@@ -489,8 +468,8 @@ while t < tMax:
         RaH = g*beta*dTmaxLiq*(ymax-ymin)**3/(nu*a)
 
         print("==============================================================")
-        print(" Time step n = %d, t = %8.3f, dt = %4.1e, t_wall = %4.1f" %
-              (n, t, dt, time.time()-twall0))
+        print(" Time step n = %d, t = %8.3f, dt0 = %4.1e, t_wall = %4.1f" %
+              (n, t, dt0, time.time()-twall0))
         print(" max|u| = %3.1e, CFL(u) = %3.1f, Pe(u) = %4.1f, RaW = %3.1e" %
               (uMax, CFL_u, Pe_u, RaW))
         print(" max|v| = %3.1e, CFL(v) = %3.1f, Pe(v) = %4.1f, RaH = %3.1e" %

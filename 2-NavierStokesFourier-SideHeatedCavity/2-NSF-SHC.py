@@ -123,7 +123,7 @@ def animateContoursAndVelocityVectors():
     # Filled contours
     ctf2 = ax2.contourf(X, Y, U, plotContourLevels2, extend='both',
                         alpha=1, linestyles=None, cmap=colormap2)
-    # plot velocity
+    # plot velocity vectors
     m = 1
     ax2.quiver(X[::m, ::m], Y[::m, ::m], u[::m, ::m], v[::m, ::m])
     # Colorbar
@@ -140,36 +140,6 @@ def animateContoursAndVelocityVectors():
         formattedFilename = '{0}_{1:5.3f}.png'.format(outputFilename, t)
         path = Path('out') / formattedFilename
         plt.savefig(path)
-
-
-def setVelocityBoundaries(u, v, uWall, vWall):
-
-    # West
-    u[:, 0] = uWall[0]
-    if np.isnan(vWall[0]):
-        v[:, 0] = v[:, 1]  # symmetry
-    else:
-        v[:, 0] = vWall[0]
-    # East
-    u[:, -1] = uWall[1]
-    if np.isnan(vWall[1]):
-        v[:, -1] = v[:, -2]  # symmetry
-    else:
-        v[:, -1] = vWall[1]
-    # South
-    if np.isnan(uWall[2]):
-        u[0, :] = u[1, :]  # symmetry
-    else:
-        u[0, :] = uWall[2]
-    v[0, :] = vWall[2]
-    # North
-    if np.isnan(uWall[3]):
-        u[-1, :] = u[-2, :]  # symmetry
-    else:
-        u[-1, :] = uWall[3]
-    v[-1, :] = vWall[3]
-
-    return u, v
 
 
 def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu, beta, T, Tref, g):
@@ -202,6 +172,36 @@ def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu, beta, T, Tref, g):
             dt/dy**2*(vn[2:, 1:-1]-2*vn[1:-1, 1:-1]+vn[0:-2, 1:-1]))
     Sv = dt*beta*g*(T[1:-1, 1:-1]-Tref)
     v[1:-1, 1:-1] = vn[1:-1, 1:-1] + Qv + Sv
+
+    return u, v
+
+
+def setVelocityBoundaries(u, v, uWall, vWall):
+
+    # West
+    u[:, 0] = uWall[0]
+    if np.isnan(vWall[0]):
+        v[:, 0] = v[:, 1]  # symmetry
+    else:
+        v[:, 0] = vWall[0]
+    # East
+    u[:, -1] = uWall[1]
+    if np.isnan(vWall[1]):
+        v[:, -1] = v[:, -2]  # symmetry
+    else:
+        v[:, -1] = vWall[1]
+    # South
+    if np.isnan(uWall[2]):
+        u[0, :] = u[1, :]  # symmetry
+    else:
+        u[0, :] = uWall[2]
+    v[0, :] = vWall[2]
+    # North
+    if np.isnan(uWall[3]):
+        u[-1, :] = u[-2, :]  # symmetry
+    else:
+        u[-1, :] = uWall[3]
+    v[-1, :] = vWall[3]
 
     return u, v
 
@@ -266,7 +266,7 @@ def correctPressure(u, v, p, rho, dt, dx, dy):
 
 def solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, Twall):
 
-    # Solve energy equation with modified heat capacity
+    # Solve energy equation
     T[1:-1, 1:-1] = Tn[1:-1, 1:-1] - (
         dt/(dx)*(np.maximum(u[1:-1, 1:-1], 0) *
                  (Tn[1:-1, 1:-1]-Tn[1:-1, 0:-2]) +
@@ -332,14 +332,11 @@ while t < tMax:
     # Intermediate velocity field u*
     [u, v] = solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu,
                                    beta, T, Tref, g)
-    # Set velocity boundaries
     [u, v] = setVelocityBoundaries(u, v, uWall, vWall)
-    # Poisson equation
+    # Pressure correction
     p = solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall,
                              beta, g, T)
-    # Pressure correction
     [u, v] = correctPressure(u, v, p, rho, dt, dx, dy)
-    # Set velocity boundaries
     [u, v] = setVelocityBoundaries(u, v, uWall, vWall)
 
     # Energy equation

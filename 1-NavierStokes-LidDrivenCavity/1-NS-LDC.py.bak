@@ -80,7 +80,8 @@ def animateContoursAndVelocityVectors():
     ax1.set_aspect(1)
     ax1.set_xlabel('x')
     ax1.set_ylabel('y')
-    ax1.set_title('Pressure contours and velocity vectors')
+    ax1.set_title('Pressure contours and velocity vectors',
+                  fontsize='larger')
     # Filled contours for pressure
     ctf1 = ax1.contourf(X, Y, p, plotContourLevels1, extend='both',
                         alpha=1, linestyles=None, cmap=colormap1)
@@ -89,7 +90,7 @@ def animateContoursAndVelocityVectors():
     cax1 = divider1.append_axes("right", size="5%", pad=0.1)
     cBar1 = fig.colorbar(ctf1, cax=cax1, extendrect=True, ticks=ticks1)
     cBar1.set_label('p / Pa')
-    # plot velocity vectors
+    # Velocity vectors
     m = 1
     ax1.quiver(X[::m, ::m], Y[::m, ::m], u[::m, ::m], v[::m, ::m])
 
@@ -99,6 +100,36 @@ def animateContoursAndVelocityVectors():
         formattedFilename = '{0}_{1:5.3f}.png'.format(outputFilename, t)
         path = Path('out') / formattedFilename
         plt.savefig(path)
+
+
+def setVelocityBoundaries(u, v, uWall, vWall):
+
+    # West
+    u[:, 0] = uWall[0]
+    if np.isnan(vWall[0]):
+        v[:, 0] = v[:, 1]  # symmetry
+    else:
+        v[:, 0] = vWall[0]
+    # East
+    u[:, -1] = uWall[1]
+    if np.isnan(vWall[1]):
+        v[:, -1] = v[:, -2]  # symmetry
+    else:
+        v[:, -1] = vWall[1]
+    # South
+    if np.isnan(uWall[2]):
+        u[0, :] = u[1, :]  # symmetry
+    else:
+        u[0, :] = uWall[2]
+    v[0, :] = vWall[2]
+    # North
+    if np.isnan(uWall[3]):
+        u[-1, :] = u[-2, :]  # symmetry
+    else:
+        u[-1, :] = uWall[3]
+    v[-1, :] = vWall[3]
+
+    return u, v
 
 
 def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu):
@@ -134,36 +165,6 @@ def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu):
     return u, v
 
 
-def setVelocityBoundaries(u, v, uWall, vWall):
-
-    # West
-    u[:, 0] = uWall[0]
-    if np.isnan(vWall[0]):
-        v[:, 0] = v[:, 1]  # symmetry
-    else:
-        v[:, 0] = vWall[0]
-    # East
-    u[:, -1] = uWall[1]
-    if np.isnan(vWall[1]):
-        v[:, -1] = v[:, -2]  # symmetry
-    else:
-        v[:, -1] = vWall[1]
-    # South
-    if np.isnan(uWall[2]):
-        u[0, :] = u[1, :]  # symmetry
-    else:
-        u[0, :] = uWall[2]
-    v[0, :] = vWall[2]
-    # North
-    if np.isnan(uWall[3]):
-        u[-1, :] = u[-2, :]  # symmetry
-    else:
-        u[-1, :] = uWall[3]
-    v[-1, :] = vWall[3]
-
-    return u, v
-
-
 def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
 
     # Right hand side
@@ -174,9 +175,6 @@ def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
            2*((u[2:, 1:-1] - u[0:-2, 1:-1])/(2*dy) *
               (v[1:-1, 2:] - v[1:-1, 0:-2])/(2*dx)) +
            ((v[2:, 1:-1] - v[0:-2, 1:-1])/(2*dy))**2))
-
-    # Reference pressure in upper left corner
-    # p[-1, 1] = 0
 
     # Solve iteratively for pressure
     for nit in range(50):
@@ -206,6 +204,8 @@ def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
             p[-1, :] = p[-2, :]  # symmetry
         else:
             p[-1, :] = pWall[3]
+        # Set reference pressure at top left corner
+        p[-1, 1] = 0
 
     return p
 
