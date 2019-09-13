@@ -2,7 +2,7 @@
 """
 Created on Sun Apr 24 11:20:40 2016
 
-@author: Julian Vogel (AkaDrBird)
+@author: Julian Vogel (RJVogel)
 
 Navier Stokes solver for lid driven cavity flow
 """
@@ -13,6 +13,9 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 import time
 from drawnow import drawnow
 from pathlib import Path
+
+# Constants
+NAN = np.nan
 
 # Output
 saveFiguresToFile = False
@@ -29,12 +32,14 @@ dx = 0.05
 dy = 0.05
 
 # Boundary conditions
-# Wall x-velocity: [W, E, S, N], np.nan = symmetry
+# Wall x-velocity: [W, E, S, N], NAN = symmetry
 uWall = [0., 0., 0., 1.]
-# Wall y-velocity: [W, E, S, N], np.nan = symmetry
+# Wall y-velocity: [W, E, S, N], NAN = symmetry
 vWall = [0., 0., 0., 0.]
-# Wall pressure: [W, E, S, N], np.nan = symmetry
-pWall = [np.nan, np.nan, np.nan, np.nan]
+# Wall pressure: [W, E, S, N], NAN = symmetry
+pWall = [NAN, NAN, NAN, NAN]
+# Reference pressure value and location in ONE of the corners: [SW, NW, NE, SE]
+pRef = [NAN, 0, NAN, NAN]
 
 # Material properties
 rho = 1.0
@@ -50,8 +55,8 @@ nit = 50  # iterations of pressure poisson equation
 dtOut = 0.05  # output step length
 nOut = int(round(tMax/dtOut))
 figureSize = (10, 6.25)
-minContour1 = 0
-maxContour1 = 6
+minContour1 = -0.29
+maxContour1 = 5.8
 colormap1 = 'jet'
 plotContourLevels1 = np.linspace(minContour1, maxContour1, num=21)
 ticks1 = np.linspace(minContour1, maxContour1, num=7)
@@ -169,14 +174,11 @@ def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
     # Right hand side
     b[1:-1, 1:-1] = rho*(
         1/dt*((u[1:-1, 2:] - u[1:-1, 0:-2])/(2*dx) +
-              (v[2:, 1:-1] - v[0:-2, 1:-1])/(2*dy))
-        - (((u[1:-1, 2:] - u[1:-1, 0:-2])/(2*dx))**2 +
-           2*((u[2:, 1:-1] - u[0:-2, 1:-1])/(2*dy) *
-              (v[1:-1, 2:] - v[1:-1, 0:-2])/(2*dx)) +
-           ((v[2:, 1:-1] - v[0:-2, 1:-1])/(2*dy))**2))
-
-    # Reference pressure in upper left corner
-    # p[-1, 1] = 0
+              (v[2:, 1:-1] - v[0:-2, 1:-1])/(2*dy)) -
+        (((u[1:-1, 2:] - u[1:-1, 0:-2])/(2*dx))**2 +
+         2*((u[2:, 1:-1] - u[0:-2, 1:-1])/(2*dy) *
+            (v[1:-1, 2:] - v[1:-1, 0:-2])/(2*dx)) +
+         ((v[2:, 1:-1] - v[0:-2, 1:-1])/(2*dy))**2))
 
     # Solve iteratively for pressure
     for nit in range(50):
@@ -206,6 +208,20 @@ def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
             p[-1, :] = p[-2, :]  # symmetry
         else:
             p[-1, :] = pWall[3]
+
+        # Reference pressure in ONE of the corners [SW, NW, NE, SE]
+        # South West
+        if not np.isnan(pRef[0]):
+            p[1, 1] = pRef[0]
+        # North West
+        if not np.isnan(pRef[1]):
+            p[-2, 1] = pRef[1]
+        # North East
+        if not np.isnan(pRef[2]):
+            p[-2, -2] = pRef[2]
+        # South East
+        if not np.isnan(pRef[3]):
+            p[1, -2] = pRef[3]
 
     return p
 
