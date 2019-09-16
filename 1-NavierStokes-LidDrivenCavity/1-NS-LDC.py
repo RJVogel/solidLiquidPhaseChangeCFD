@@ -52,7 +52,7 @@ dt0 = 0.001
 nit = 50  # iterations of pressure poisson equation
 
 # Visualization
-dtOut = 1  # output step length
+dtOut = 1.0  # output step length
 nOut = int(round(tMax/dtOut))
 figureSize = (10, 6.25)
 minContour1 = 0
@@ -302,9 +302,11 @@ while t < tMax:
         # Velocities
         uc = avg(u, 1)
         vc = avg(v, 0)
+        ucorn = avg(u, 0)
+        vcorn = avg(v, 1)
         U = (uc[1:-1, :]**2+vc[:, 1:-1]**2)**0.5
-        uMax = np.max(np.abs(u))
-        vMax = np.max(np.abs(v))
+        uMax = np.max(np.abs(ucorn))
+        vMax = np.max(np.abs(vcorn))
         # Peclet numbers
         Pe_u = uMax*dx/nu
         Pe_v = vMax*dy/nu
@@ -315,9 +317,9 @@ while t < tMax:
         print("==============================================================")
         print(" Time step n = %d, t = %8.3f, dt0 = %4.1e, t_wall = %4.1f" %
               (n, t, dt0, time.time()-twall0))
-        print(" max|u| = %3.1e, CFL(u) = %3.1f, Pe(u) = %4.1f" %
+        print(" max|u| = %5.2e, CFL(u) = %5.2f, Pe(u) = %5.2f" %
               (uMax, CFL_u, Pe_u))
-        print(" max|v| = %3.1e, CFL(v) = %3.1f, Pe(v) = %4.1f" %
+        print(" max|v| = %5.2e, CFL(v) = %5.2f, Pe(v) = %5.2f" %
               (vMax, CFL_v, Pe_v))
 
         drawnow(animateContoursAndVelocityVectors)
