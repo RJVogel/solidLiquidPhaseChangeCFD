@@ -39,7 +39,7 @@ vWall = [0., 0., 0., 0.]
 # Wall pressure: [W, E, S, N], NAN = symmetry
 pWall = [NAN, NAN, NAN, NAN]
 # Reference pressure value and location in ONE of the corners: [SW, NW, NE, SE]
-pRef = [NAN, 0, NAN, NAN]
+pRef = [0, NAN, NAN, NAN]
 
 # Material properties
 rho = 1.0
@@ -55,7 +55,7 @@ nit = 50  # iterations of pressure poisson equation
 dtOut = 1.0  # output step length
 nOut = int(round(tMax/dtOut))
 figureSize = (10, 6.25)
-minContour1 = 0
+minContour1 = 0.055
 maxContour1 = 14.9
 colormap1 = 'jet'
 plotContourLevels1 = np.linspace(minContour1, maxContour1, num=21)
@@ -85,7 +85,9 @@ b = np.zeros((ny, nx))
 def avg(array, axis):
 
     # Compute average
-    if axis == 0:
+    if len(array.shape) == 1:
+        return (array[:-1]+array[1:])/2
+    elif axis == 0:
         return (array[:-1, :]+array[1:, :])/2
     elif axis == 1:
         return (array[:, :-1]+array[:, 1:])/2
@@ -102,15 +104,12 @@ def animateContoursAndVelocityVectors():
     ax1.set_xlabel('x')
     ax1.set_ylabel('y')
     ax1.set_title('Pressure contours and velocity vectors')
-    # Filled contours for pressure at faces
-    pf = avg(avg(p, 0), 1)
-    ctf1 = ax1.contourf(Xf, Yf, pf, plotContourLevels1,
-                        extend='both', alpha=1, linestyles=None,
-                        cmap=colormap1)
+    # Contours of pressure
+    ctf1 = ax1.contourf(Xf, Yf, pf, 41, cmap=colormap1, )
     # Colorbar
     divider1 = make_axes_locatable(ax1)
     cax1 = divider1.append_axes("right", size="5%", pad=0.1)
-    cBar1 = fig.colorbar(ctf1, cax=cax1, extendrect=True, ticks=ticks1)
+    cBar1 = fig.colorbar(ctf1, cax=cax1, extendrect=True)
     cBar1.set_label('p / Pa')
     # plot velocity vectors
     m = 1
@@ -264,7 +263,7 @@ def correctPressure(u, v, p, rho, dt, dx, dy):
 
 
 # Create figure
-plt.close('all')
+# plt.close('all')
 fig = plt.figure(figsize=figureSize, dpi=100)
 
 # Time stepping
@@ -299,6 +298,11 @@ while t < tMax:
 
         # Calculate derived quantities
 
+        # Divergence
+        divU = np.diff(u[1:-1, :], axis=1)/np.diff(Xf[1:, :], axis=1) + \
+            np.diff(v[:, 1:-1], axis=0)/np.diff(Yf[:, 1:], axis=0)
+        # Pressure at cell corners
+        pf = avg(avg(p, 0), 1)
         # Velocities
         uc = avg(u, 1)
         vc = avg(v, 0)
