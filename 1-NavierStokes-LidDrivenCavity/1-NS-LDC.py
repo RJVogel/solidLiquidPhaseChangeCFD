@@ -39,7 +39,7 @@ vWall = [0., 0., 0., 0.]
 # Wall pressure: [W, E, S, N], NAN = symmetry
 pWall = [NAN, NAN, NAN, NAN]
 # Reference pressure value and location in ONE of the corners: [SW, NW, NE, SE]
-pRef = [NAN, 0, NAN, NAN]
+pRef = [0, NAN, NAN, NAN]
 
 # Material properties
 rho = 1.0
@@ -52,29 +52,47 @@ dt0 = 0.001
 nit = 50  # iterations of pressure poisson equation
 
 # Visualization
-dtOut = 0.05  # output step length
+dtOut = 1.0  # output step length
 nOut = int(round(tMax/dtOut))
 figureSize = (10, 6.25)
-minContour1 = -0.29
-maxContour1 = 5.8
+minContour1 = 0.055
+maxContour1 = 14.9
 colormap1 = 'jet'
 plotContourLevels1 = np.linspace(minContour1, maxContour1, num=21)
 ticks1 = np.linspace(minContour1, maxContour1, num=7)
 
 # Mesh generation
-nx = int((xmax-xmin)/dx)+1
-ny = int((ymax-ymin)/dy)+1
-x = np.linspace(xmin, xmax, nx)
-y = np.linspace(ymin, ymax, ny)
+# Centered points
+nx = int((xmax-xmin)/dx)+2
+ny = int((ymax-ymin)/dy)+2
+x = np.linspace(xmin-dx/2, xmax+dx/2, nx)
+y = np.linspace(ymin-dy/2, ymax+dy/2, nx)
 X, Y = np.meshgrid(x, y)
+# Faces
+xf = np.linspace(xmin, xmax, nx-1)
+yf = np.linspace(ymin, ymax, nx-1)
+Xf, Yf = np.meshgrid(xf, yf)
 
 # Initial values
-u = np.zeros((ny, nx))
-v = np.zeros((ny, nx))
+u = np.zeros((ny, nx-1))
+v = np.zeros((ny-1, nx))
 p = np.zeros((ny, nx))
 b = np.zeros((ny, nx))
 
 # Functions
+
+
+def avg(array, axis):
+
+    # Compute average
+    if len(array.shape) == 1:
+        return (array[:-1]+array[1:])/2
+    elif axis == 0:
+        return (array[:-1, :]+array[1:, :])/2
+    elif axis == 1:
+        return (array[:, :-1]+array[:, 1:])/2
+    else:
+        return NAN
 
 
 def animateContoursAndVelocityVectors():
@@ -86,17 +104,17 @@ def animateContoursAndVelocityVectors():
     ax1.set_xlabel('x')
     ax1.set_ylabel('y')
     ax1.set_title('Pressure contours and velocity vectors')
-    # Filled contours for pressure
-    ctf1 = ax1.contourf(X, Y, p, plotContourLevels1, extend='both',
-                        alpha=1, linestyles=None, cmap=colormap1)
+    # Contours of pressure
+    ctf1 = ax1.contourf(Xf, Yf, pf, 41, cmap=colormap1, )
     # Colorbar
     divider1 = make_axes_locatable(ax1)
     cax1 = divider1.append_axes("right", size="5%", pad=0.1)
-    cBar1 = fig.colorbar(ctf1, cax=cax1, extendrect=True, ticks=ticks1)
+    cBar1 = fig.colorbar(ctf1, cax=cax1, extendrect=True)
     cBar1.set_label('p / Pa')
     # plot velocity vectors
     m = 1
-    ax1.quiver(X[::m, ::m], Y[::m, ::m], u[::m, ::m], v[::m, ::m])
+    ax1.quiver(X[1:-1, 1:-1][::m, ::m], Y[1:-1, 1:-1][::m, ::m],
+               uc[1:-1, :][::m, ::m], vc[:, 1:-1][::m, ::m])
 
     plt.tight_layout()
 
@@ -106,39 +124,6 @@ def animateContoursAndVelocityVectors():
         plt.savefig(path)
 
 
-def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu):
-
-    # Solve u-velocity
-    Qu = -dt/(dx)*((np.maximum(un[1:-1, 1:-1], 0)*un[1:-1, 1:-1] +
-                   np.minimum(un[1:-1, 1:-1], 0)*un[1:-1, 2:]) - (
-                   np.maximum(un[1:-1, 1:-1], 0)*un[1:-1, 0:-2] +
-                   np.minimum(un[1:-1, 1:-1], 0)*un[1:-1, 1:-1])) + \
-        -dt/(dy)*((np.maximum(vn[1:-1, 1:-1], 0)*un[1:-1, 1:-1] +
-                  np.minimum(vn[1:-1, 1:-1], 0)*un[2:, 1:-1]) - (
-                  np.maximum(vn[1:-1, 1:-1], 0)*un[0:-2, 1:-1] +
-                  np.minimum(vn[1:-1, 1:-1], 0)*un[1:-1, 1:-1])) + \
-        nu * (
-            dt/dx**2*(un[1:-1, 2:]-2*un[1:-1, 1:-1]+un[1:-1, 0:-2]) +
-            dt/dy**2*(un[2:, 1:-1]-2*un[1:-1, 1:-1]+un[0:-2, 1:-1]))
-    u[1:-1, 1:-1] = un[1:-1, 1:-1] + Qu
-
-    # Solve v-velocity
-    Qv = -dt/(dx)*((np.maximum(un[1:-1, 1:-1], 0)*vn[1:-1, 1:-1] +
-                   np.minimum(un[1:-1, 1:-1], 0)*vn[1:-1, 2:]) - (
-                   np.maximum(un[1:-1, 1:-1], 0)*vn[1:-1, 0:-2] +
-                   np.minimum(un[1:-1, 1:-1], 0)*vn[1:-1, 1:-1])) + \
-        -dt/(dy)*((np.maximum(vn[1:-1, 1:-1], 0)*vn[1:-1, 1:-1] +
-                  np.minimum(vn[1:-1, 1:-1], 0)*vn[2:, 1:-1]) - (
-                  np.maximum(vn[1:-1, 1:-1], 0)*vn[0:-2, 1:-1] +
-                  np.minimum(vn[1:-1, 1:-1], 0)*vn[1:-1, 1:-1])) + \
-        nu * (
-            dt/dx**2*(vn[1:-1, 2:]-2*vn[1:-1, 1:-1]+vn[1:-1, 0:-2]) +
-            dt/dy**2*(vn[2:, 1:-1]-2*vn[1:-1, 1:-1]+vn[0:-2, 1:-1]))
-    v[1:-1, 1:-1] = vn[1:-1, 1:-1] + Qv
-
-    return u, v
-
-
 def setVelocityBoundaries(u, v, uWall, vWall):
 
     # West
@@ -146,39 +131,80 @@ def setVelocityBoundaries(u, v, uWall, vWall):
     if np.isnan(vWall[0]):
         v[:, 0] = v[:, 1]  # symmetry
     else:
-        v[:, 0] = vWall[0]
+        v[:, 0] = 2*vWall[0] - v[:, 1]
     # East
     u[:, -1] = uWall[1]
     if np.isnan(vWall[1]):
         v[:, -1] = v[:, -2]  # symmetry
     else:
-        v[:, -1] = vWall[1]
+        v[:, -1] = 2*vWall[1] - v[:, -2]
     # South
+    v[0, :] = vWall[2]
     if np.isnan(uWall[2]):
         u[0, :] = u[1, :]  # symmetry
     else:
-        u[0, :] = uWall[2]
-    v[0, :] = vWall[2]
+        u[0, :] = 2*uWall[2] - u[1, :]
     # North
+    v[-1, :] = vWall[3]
     if np.isnan(uWall[3]):
         u[-1, :] = u[-2, :]  # symmetry
     else:
-        u[-1, :] = uWall[3]
-    v[-1, :] = vWall[3]
+        u[-1, :] = 2*uWall[3] - u[-2, :]
+
+    return u, v
+
+
+def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu):
+
+    # Interpolated values
+    uah = avg(un, 1)  # horizontal average lives in cell centers
+    uav = avg(un, 0)  # vertical average lives in cell corners
+    vah = avg(vn, 1)  # horizontal average lives in cell corners
+    vav = avg(vn, 0)  # vertical average lives in cell centers
+
+    # Non-linear terms
+    # u-velocity
+    u[1:-1, 1:-1] = un[1:-1, 1:-1] - (
+        dt/(dx)*(uah[1:-1, 1:]*uah[1:-1, 1:] -
+                 uah[1:-1, :-1]*uah[1:-1, :-1]) +
+        dt/(dy)*(vah[1:, 1:-1]*uav[1:, 1:-1] -
+                 vah[:-1, 1:-1]*uav[:-1, 1:-1]))
+    # v-velocity
+    v[1:-1, 1:-1] = vn[1:-1, 1:-1] - (
+        dt/(dx)*(uav[1:-1, 1:]*vah[1:-1, 1:] -
+                 uav[1:-1, :-1]*vah[1:-1, :-1]) +
+        dt/(dy)*(vav[1:, 1:-1]*vav[1:, 1:-1] -
+                 vav[:-1, 1:-1]*vav[:-1, 1:-1]))
+
+    # Diffusive terms
+    # u-velocity
+    u[1:-1, 1:-1] = u[1:-1, 1:-1] + \
+        nu * (
+            dt/dx**2*(u[1:-1, 2:]-2*u[1:-1, 1:-1]+u[1:-1, :-2]) +
+            dt/dy**2*(u[2:, 1:-1]-2*u[1:-1, 1:-1]+u[:-2, 1:-1]))
+    # v-velocity
+    v[1:-1, 1:-1] = v[1:-1, 1:-1] + \
+        nu * (
+            dt/dx**2*(v[1:-1, 2:]-2*v[1:-1, 1:-1]+v[1:-1, :-2]) +
+            dt/dy**2*(v[2:, 1:-1]-2*v[1:-1, 1:-1]+v[:-2, 1:-1]))
 
     return u, v
 
 
 def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
 
+    # Interpolations
+    uahv = avg(avg(u, 1), 0)
+    vavh = avg(avg(v, 0), 1)
+
     # Right hand side
     b[1:-1, 1:-1] = rho*(
-        1/dt*((u[1:-1, 2:] - u[1:-1, 0:-2])/(2*dx) +
-              (v[2:, 1:-1] - v[0:-2, 1:-1])/(2*dy)) -
-        (((u[1:-1, 2:] - u[1:-1, 0:-2])/(2*dx))**2 +
-         2*((u[2:, 1:-1] - u[0:-2, 1:-1])/(2*dy) *
-            (v[1:-1, 2:] - v[1:-1, 0:-2])/(2*dx)) +
-         ((v[2:, 1:-1] - v[0:-2, 1:-1])/(2*dy))**2))
+        1/dt*((u[1:-1, 1:] - u[1:-1, :-1])/(2*dx) +
+              (v[1:, 1:-1] - v[:-1, 1:-1])/(2*dy)) -
+        (((u[1:-1, 1:] - u[1:-1, :-1])/(2*dx))**2 +
+         2*((uahv[1:, :] - uahv[:-1, :])/(2*dy) *
+            (vavh[:, 1:] - vavh[:, :-1])/(2*dx)) +
+         ((v[1:, 1:-1] - v[:-1, 1:-1])/(2*dy))**2))
 
     # Solve iteratively for pressure
     for nit in range(50):
@@ -229,15 +255,15 @@ def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
 def correctPressure(u, v, p, rho, dt, dx, dy):
 
     u[1:-1, 1:-1] = u[1:-1, 1:-1] - 1/rho*dt * \
-        (p[1:-1, 2:]-p[1:-1, 0:-2])/(2*dx)
+        (p[1:-1, 2:-1]-p[1:-1, 1:-2])/(2*dx)
     v[1:-1, 1:-1] = v[1:-1, 1:-1] - 1/rho*dt * \
-        (p[2:, 1:-1]-p[0:-2, 1:-1])/(2*dy)
+        (p[2:-1, 1:-1]-p[1:-2, 1:-1])/(2*dy)
 
     return u, v
 
 
 # Create figure
-plt.close('all')
+# plt.close('all')
 fig = plt.figure(figsize=figureSize, dpi=100)
 
 # Time stepping
@@ -258,25 +284,33 @@ while t < tMax:
     un = u.copy()
     vn = v.copy()
 
-    # Momentum equation with projection method
-    # Intermediate velocity field u*
-    [u, v] = solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu)
+    # Projection method
     # Set velocity boundaries
     [u, v] = setVelocityBoundaries(u, v, uWall, vWall)
-    # Poisson equation
+    # Intermediate velocity field u*
+    [u, v] = solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu)
+    # Solve poisson equation
     p = solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall)
     # Pressure correction
     [u, v] = correctPressure(u, v, p, rho, dt, dx, dy)
-    # Set velocity boundaries
-    [u, v] = setVelocityBoundaries(u, v, uWall, vWall)
 
     if (t-tOut) > -1e-6:
 
         # Calculate derived quantities
+
+        # Divergence
+        divU = np.diff(u[1:-1, :], axis=1)/np.diff(Xf[1:, :], axis=1) + \
+            np.diff(v[:, 1:-1], axis=0)/np.diff(Yf[:, 1:], axis=0)
+        # Pressure at cell corners
+        pf = avg(avg(p, 0), 1)
         # Velocities
-        U = (u**2+v**2)**0.5
-        uMax = np.max(np.abs(u))
-        vMax = np.max(np.abs(v))
+        uc = avg(u, 1)
+        vc = avg(v, 0)
+        ucorn = avg(u, 0)
+        vcorn = avg(v, 1)
+        U = (uc[1:-1, :]**2+vc[:, 1:-1]**2)**0.5
+        uMax = np.max(np.abs(ucorn))
+        vMax = np.max(np.abs(vcorn))
         # Peclet numbers
         Pe_u = uMax*dx/nu
         Pe_v = vMax*dy/nu
@@ -287,9 +321,9 @@ while t < tMax:
         print("==============================================================")
         print(" Time step n = %d, t = %8.3f, dt0 = %4.1e, t_wall = %4.1f" %
               (n, t, dt0, time.time()-twall0))
-        print(" max|u| = %3.1e, CFL(u) = %3.1f, Pe(u) = %4.1f" %
+        print(" max|u| = %5.2e, CFL(u) = %5.2f, Pe(u) = %5.2f" %
               (uMax, CFL_u, Pe_u))
-        print(" max|v| = %3.1e, CFL(v) = %3.1f, Pe(v) = %4.1f" %
+        print(" max|v| = %5.2e, CFL(v) = %5.2f, Pe(v) = %5.2f" %
               (vMax, CFL_v, Pe_v))
 
         drawnow(animateContoursAndVelocityVectors)
