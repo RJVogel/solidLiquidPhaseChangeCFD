@@ -84,6 +84,41 @@ v = np.zeros((ny-1, nx))
 p = np.zeros((ny, nx))
 b = np.zeros((ny, nx))
 
+CP = np.zeros((ny, nx))
+CW = np.zeros((ny, nx))
+CE = np.zeros((ny, nx))
+CS = np.zeros((ny, nx))
+CN = np.zeros((ny, nx))
+
+# Boundary conditions
+CP[:, 0] = 1
+CP[:, -1] = 1
+CP[0, :] = 1
+CP[-1, :] = 1
+CW[1:-1, -1] = -1
+CE[1:-1, 0] = -1
+CS[-1, 1:-1] = 0
+CN[0, 1:-1] = -1
+CW[0, -1] = -0.5
+CW[-1, -1] = 0
+CE[0, 0] = -0.5
+CE[-1, 0] = 0
+CS[[-1, -1], [0, -1]] = 0
+CN[[0, 0], [0, -1]] = -0.5
+
+# Inner nodes
+CP[1:-1, 1:-1] = 2*(1/dx**2+1/dy**2)
+CW[1:-1, 1:-1] = -1/dx**2
+CE[1:-1, 1:-1] = -1/dx**2
+CS[1:-1, 1:-1] = -1/dy**2
+CN[1:-1, 1:-1] = -1/dy**2
+
+A = sp.csr_matrix(sp.spdiags((CP.flat[:], CW.flat[:], CE.flat[:],
+                              CS.flat[:],
+                              CN.flat[:]),
+                             [0, 1, -1, nx, -(nx)],
+                             ((nx)*(ny)), ((nx)*(ny))).T)
+
 # Functions
 
 
@@ -212,41 +247,6 @@ def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
          ((v[1:, 1:-1] - v[:-1, 1:-1])/(2*dy))**2))
 
     if poissonSolver == 'direct':
-
-        CP = np.zeros((ny, nx))
-        CW = np.zeros((ny, nx))
-        CE = np.zeros((ny, nx))
-        CS = np.zeros((ny, nx))
-        CN = np.zeros((ny, nx))
-
-        # Boundary conditions
-        CP[:, 0] = 1
-        CP[:, -1] = 1
-        CP[0, :] = 1
-        CP[-1, :] = 1
-        CW[1:-1, -1] = -1
-        CE[1:-1, 0] = -1
-        CS[-1, 1:-1] = 0
-        CN[0, 1:-1] = -1
-        CW[0, -1] = -0.5
-        CW[-1, -1] = 0
-        CE[0, 0] = -0.5
-        CE[-1, 0] = 0
-        CS[[-1, -1], [0, -1]] = 0
-        CN[[0, 0], [0, -1]] = -0.5
-
-        # Inner nodes
-        CP[1:-1, 1:-1] = 2*(1/dx**2+1/dy**2)
-        CW[1:-1, 1:-1] = -1/dx**2
-        CE[1:-1, 1:-1] = -1/dx**2
-        CS[1:-1, 1:-1] = -1/dy**2
-        CN[1:-1, 1:-1] = -1/dy**2
-
-        A = sp.csr_matrix(sp.spdiags((CP.flat[:], CW.flat[:], CE.flat[:],
-                                      CS.flat[:],
-                                      CN.flat[:]),
-                                     [0, 1, -1, nx, -(nx)],
-                                     ((nx)*(ny)), ((nx)*(ny))).T)
 
         p.flat[:] = spla.spsolve(A, -b.flat[:])
 
