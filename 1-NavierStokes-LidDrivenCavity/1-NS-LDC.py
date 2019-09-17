@@ -8,6 +8,8 @@ Navier Stokes solver for lid driven cavity flow
 """
 
 import numpy as np
+from scipy import sparse as sp
+import scipy.sparse.linalg as spla
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import time
@@ -28,8 +30,8 @@ ymin = 0.
 ymax = 2.
 
 # Spatial discretization
-dx = 0.05
-dy = 0.05
+dx = 1
+dy = 1
 
 # Boundary conditions
 # Wall x-velocity: [W, E, S, N], NAN = symmetry
@@ -45,6 +47,9 @@ pRef = [0, NAN, NAN, NAN]
 rho = 1.0
 mu = 0.1
 nu = mu/rho
+
+# Solver
+poissonSolver = 'direct'
 
 # Temporal discretization
 tMax = 1.0
@@ -206,48 +211,89 @@ def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
             (vavh[:, 1:] - vavh[:, :-1])/(2*dx)) +
          ((v[1:, 1:-1] - v[:-1, 1:-1])/(2*dy))**2))
 
-    # Solve iteratively for pressure
-    for nit in range(50):
+    if poissonSolver == 'direct':
 
-        p[1:-1, 1:-1] = (dy**2*(p[1:-1, 2:]+p[1:-1, :-2]) +
-                         dx**2*(p[2:, 1:-1]+p[:-2, 1:-1]) -
-                         b[1:-1, 1:-1]*dx**2*dy**2)/(2*(dx**2+dy**2))
+        CP = np.zeros((ny, nx))
+        CW = np.zeros((ny, nx))
+        CE = np.zeros((ny, nx))
+        CS = np.zeros((ny, nx))
+        CN = np.zeros((ny, nx))
 
         # Boundary conditions
-        # West
-        if np.isnan(pWall[0]):
-            p[:, 0] = p[:, 1]  # symmetry
-        else:
-            p[:, 0] = pWall[0]
-        # East
-        if np.isnan(pWall[1]):
-            p[:, -1] = p[:, -2]  # symmetry
-        else:
-            p[:, -1] = pWall[1]
-        # South
-        if np.isnan(pWall[2]):
-            p[0, :] = p[1, :]  # symmetry
-        else:
-            p[0, :] = pWall[2]
-        # North
-        if np.isnan(pWall[3]):
-            p[-1, :] = p[-2, :]  # symmetry
-        else:
-            p[-1, :] = pWall[3]
+        CP[:, 0] = 1
+        CP[:, -1] = 1
+        CP[0, :] = 1
+        CP[-1, :] = 1
+        CW[1:-1, -1] = -1
+        CE[1:-1, 0] = -1
+        CS[-1, 1:-1] = 0
+        CN[0, 1:-1] = -1
+        CW[0, -1] = -0.5
+        CW[-1, -1] = 0
+        CE[0, 0] = -0.5
+        CE[-1, 0] = 0
+        CS[[-1, -1], [0, -1]] = 0
+        CN[[0, 0], [0, -1]] = -0.5
 
-        # Reference pressure in ONE of the corners [SW, NW, NE, SE]
-        # South West
-        if not np.isnan(pRef[0]):
-            p[1, 1] = pRef[0]
-        # North West
-        if not np.isnan(pRef[1]):
-            p[-2, 1] = pRef[1]
-        # North East
-        if not np.isnan(pRef[2]):
-            p[-2, -2] = pRef[2]
-        # South East
-        if not np.isnan(pRef[3]):
-            p[1, -2] = pRef[3]
+        # Inner nodes
+        CP[1:-1, 1:-1] = 2*(1/dx**2+1/dy**2)
+        CW[1:-1, 1:-1] = -1/dx**2
+        CE[1:-1, 1:-1] = -1/dx**2
+        CS[1:-1, 1:-1] = -1/dy**2
+        CN[1:-1, 1:-1] = -1/dy**2
+
+        A = sp.csr_matrix(sp.spdiags((CP.flat[:], CW.flat[:], CE.flat[:],
+                                      CS.flat[:],
+                                      CN.flat[:]),
+                                     [0, 1, -1, nx, -(nx)],
+                                     ((nx)*(ny)), ((nx)*(ny))).T)
+
+        p.flat[:] = spla.spsolve(A, -b.flat[:])
+
+    elif (poissonSolver == 'iterative'):
+
+        # Solve iteratively for pressure
+        for nit in range(50):
+
+            p[1:-1, 1:-1] = (dy**2*(p[1:-1, 2:]+p[1:-1, :-2]) +
+                             dx**2*(p[2:, 1:-1]+p[:-2, 1:-1]) -
+                             b[1:-1, 1:-1]*dx**2*dy**2)/(2*(dx**2+dy**2))
+
+            # Boundary conditions
+            # West
+            if np.isnan(pWall[0]):
+                p[:, 0] = p[:, 1]  # symmetry
+            else:
+                p[:, 0] = pWall[0]
+            # East
+            if np.isnan(pWall[1]):
+                p[:, -1] = p[:, -2]  # symmetry
+            else:
+                p[:, -1] = pWall[1]
+            # South
+            if np.isnan(pWall[2]):
+                p[0, :] = p[1, :]  # symmetry
+            else:
+                p[0, :] = pWall[2]
+            # North
+            if np.isnan(pWall[3]):
+                p[-1, :] = p[-2, :]  # symmetry
+            else:
+                p[-1, :] = pWall[3]
+
+            # Reference pressure in ONE of the corners [SW, NW, NE, SE]
+            # South West
+            if not np.isnan(pRef[0]):
+                p[1, 1] = pRef[0]
+            # North West
+            if not np.isnan(pRef[1]):
+                p[-2, 1] = pRef[1]
+            # North East
+            if not np.isnan(pRef[2]):
+                p[-2, -2] = pRef[2]
+            # South East
+            if not np.isnan(pRef[3]):
+                p[1, -2] = pRef[3]
 
     return p
 
