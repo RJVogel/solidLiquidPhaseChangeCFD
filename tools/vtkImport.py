@@ -82,14 +82,14 @@ figureSize = (10, 6.25)
 colormap1 = 'jet'
 fig = plt.figure(figsize=figureSize, dpi=100)
 
+# plot pressure and velocity
 # Axis
-ax1 = fig.add_subplot(111)
+ax1 = fig.add_subplot(121)
 ax1.set_aspect(1)
 ax1.set_xlabel('x')
 ax1.set_ylabel('y')
 ax1.set_title('Pressure contours and velocity vectors')
-# Filled contours for pressure at faces
-
+# Contours of pressure
 ctf1 = ax1.contourf(Xf, Yf, pf, 41, cmap=colormap1)
 # Colorbar
 divider1 = make_axes_locatable(ax1)
@@ -100,5 +100,19 @@ cBar1.set_label('p / Pa')
 m = 1
 ax1.quiver(X[::m, ::m], Y[::m, ::m],
            uc[::m, ::m], vc[::m, ::m])
+
+# Axis
+ax2 = fig.add_subplot(122)
+ax2.set_aspect(1)
+ax2.set_xlabel('x')
+ax2.set_ylabel('y')
+ax2.set_title('Divergence of velocity')
+# Pcolor of divergence
+pc1 = ax2.pcolor(Xf, Yf, divU, cmap=colormap1)
+# Colorbar
+divider2 = make_axes_locatable(ax2)
+cax2 = divider2.append_axes("right", size="5%", pad=0.1)
+cBar2 = fig.colorbar(pc1, cax=cax2, extendrect=True)
+cBar2.set_label('div (U) / 1/s')
 
 plt.tight_layout()

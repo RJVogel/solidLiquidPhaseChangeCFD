@@ -8,7 +8,7 @@ Navier Stokes solver for lid driven cavity flow
 """
 
 import numpy as np
-from scipy import sparse as sp
+from scipy import sparse as sps
 import scipy.sparse.linalg as spla
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -25,13 +25,13 @@ outputFilename = 'anim'
 
 # Geometry
 xmin = 0.
-xmax = 2.
+xmax = 2.0
 ymin = 0.
-ymax = 2.
+ymax = 2.0
 
 # Spatial discretization
-dx = 1
-dy = 1
+dx = 0.05
+dy = 0.05
 
 # Boundary conditions
 # Wall x-velocity: [W, E, S, N], NAN = symmetry
@@ -49,15 +49,15 @@ mu = 0.1
 nu = mu/rho
 
 # Solver
-poissonSolver = 'direct'
+poissonSolver = 'iterative'
 
 # Temporal discretization
-tMax = 1.0
+tMax = 1.
 dt0 = 0.001
 nit = 50  # iterations of pressure poisson equation
 
 # Visualization
-dtOut = 1.0  # output step length
+dtOut = 1.  # output step length
 nOut = int(round(tMax/dtOut))
 figureSize = (10, 6.25)
 minContour1 = 0.055
@@ -67,57 +67,58 @@ plotContourLevels1 = np.linspace(minContour1, maxContour1, num=21)
 ticks1 = np.linspace(minContour1, maxContour1, num=7)
 
 # Mesh generation
-# Centered points
-nx = int((xmax-xmin)/dx)+2
-ny = int((ymax-ymin)/dy)+2
-x = np.linspace(xmin-dx/2, xmax+dx/2, nx)
-y = np.linspace(ymin-dy/2, ymax+dy/2, nx)
+# Number of inner points
+nx = int((xmax-xmin)/dx)
+ny = int((ymax-ymin)/dy)
+# Centers with boundary nodes
+x = np.linspace(xmin-dx/2, xmax+dx/2, nx+2)
+y = np.linspace(ymin-dy/2, ymax+dy/2, ny+2)
 X, Y = np.meshgrid(x, y)
-# Faces
-xf = np.linspace(xmin, xmax, nx-1)
-yf = np.linspace(ymin, ymax, nx-1)
+# Faces with boundary nodes
+xf = np.linspace(xmin, xmax, nx+1)
+yf = np.linspace(ymin, ymax, ny+1)
 Xf, Yf = np.meshgrid(xf, yf)
 
 # Initial values
-u = np.zeros((ny, nx-1))
-v = np.zeros((ny-1, nx))
-p = np.zeros((ny, nx))
-b = np.zeros((ny, nx))
+u = np.zeros((ny+2, nx+1))
+v = np.zeros((ny+1, nx+2))
+p = np.zeros((ny+2, nx+2))
+b = np.zeros((ny+2, nx+2))
 
-CP = np.zeros((ny, nx))
-CW = np.zeros((ny, nx))
-CE = np.zeros((ny, nx))
-CS = np.zeros((ny, nx))
-CN = np.zeros((ny, nx))
+# Poisson Matrix
+# Neighbor coefficients x-direction
+en = np.ones((1, nx))/(dx*dx)
+# Point coefficients x-direction
+ep = -2*np.ones((1, nx))
+ep[:, 0] += 1  # west side Neumann boundary condition
+ep[:, -1] += 1  # east side Neumann boundary condition
+ep = ep/(dx*dx)
+# 1D coefficient matrix x-direction
+Ax1d = sps.spdiags((ep.flat[:], en.flat[:], en.flat[:]),
+                   [0, 1, -1], (nx), (nx))
+# Identity matrix x-direction
+Iy = sps.eye(ny)
+# Full 2d coefficient matrix x-direction
+Ax = sps.kron(Iy, Ax1d)
+# Neighbor coefficients y-direction
+en = np.ones((1, ny))/(dy*dy)
+# Point coefficients y-direction
+ep = -2*np.ones((1, ny))
+ep[:, 0] += 1  # south side Neumann boundary condition
+ep[:, -1] += 1  # north side Neumann boundary condition
+ep = ep/(dy*dy)
+# 1D coefficient matrix y-direction
+Ay1d = sps.spdiags((ep.flat[:], en.flat[:], en.flat[:]),
+                   [0, 1, -1], (ny), (ny))
+# Identity matrix y-direction
+Ix = sps.eye(nx)
+# Full 2d coefficient matrix y-direction
+Ay = sps.kron(Ay1d, Ix)
+# Full matrix both directions
+A = sps.csr_matrix(Ax + Ay)
+#  Set zero pressure values at boundary nodes in south west corner
+A[0, 0] = 3/2*A[0, 0]
 
-# Boundary conditions
-CP[:, 0] = 1
-CP[:, -1] = 1
-CP[0, :] = 1
-CP[-1, :] = 1
-CW[1:-1, -1] = -1
-CE[1:-1, 0] = -1
-CS[-1, 1:-1] = 0
-CN[0, 1:-1] = -1
-CW[0, -1] = -0.5
-CW[-1, -1] = 0
-CE[0, 0] = -0.5
-CE[-1, 0] = 0
-CS[[-1, -1], [0, -1]] = 0
-CN[[0, 0], [0, -1]] = -0.5
-
-# Inner nodes
-CP[1:-1, 1:-1] = 2*(1/dx**2+1/dy**2)
-CW[1:-1, 1:-1] = -1/dx**2
-CE[1:-1, 1:-1] = -1/dx**2
-CS[1:-1, 1:-1] = -1/dy**2
-CN[1:-1, 1:-1] = -1/dy**2
-
-A = sp.csr_matrix(sp.spdiags((CP.flat[:], CW.flat[:], CE.flat[:],
-                              CS.flat[:],
-                              CN.flat[:]),
-                             [0, 1, -1, nx, -(nx)],
-                             ((nx)*(ny)), ((nx)*(ny))).T)
 
 # Functions
 
@@ -139,13 +140,13 @@ def animateContoursAndVelocityVectors():
 
     # plot pressure and velocity
     # Axis
-    ax1 = fig.add_subplot(111)
+    ax1 = fig.add_subplot(121)
     ax1.set_aspect(1)
     ax1.set_xlabel('x')
     ax1.set_ylabel('y')
     ax1.set_title('Pressure contours and velocity vectors')
     # Contours of pressure
-    ctf1 = ax1.contourf(Xf, Yf, pf, 41, cmap=colormap1, )
+    ctf1 = ax1.contourf(Xf, Yf, pf, 41, cmap=colormap1)
     # Colorbar
     divider1 = make_axes_locatable(ax1)
     cax1 = divider1.append_axes("right", size="5%", pad=0.1)
@@ -155,6 +156,20 @@ def animateContoursAndVelocityVectors():
     m = 1
     ax1.quiver(X[1:-1, 1:-1][::m, ::m], Y[1:-1, 1:-1][::m, ::m],
                uc[1:-1, :][::m, ::m], vc[:, 1:-1][::m, ::m])
+
+    # Axis
+    ax2 = fig.add_subplot(122)
+    ax2.set_aspect(1)
+    ax2.set_xlabel('x')
+    ax2.set_ylabel('y')
+    ax2.set_title('Divergence of velocity')
+    # Pcolor of divergence
+    pc1 = ax2.pcolor(Xf, Yf, divU, cmap=colormap1)
+    # Colorbar
+    divider2 = make_axes_locatable(ax2)
+    cax2 = divider2.append_axes("right", size="5%", pad=0.1)
+    cBar2 = fig.colorbar(pc1, cax=cax2, extendrect=True)
+    cBar2.set_label('div (U) / 1/s')
 
     plt.tight_layout()
 
@@ -171,25 +186,25 @@ def setVelocityBoundaries(u, v, uWall, vWall):
     if np.isnan(vWall[0]):
         v[:, 0] = v[:, 1]  # symmetry
     else:
-        v[:, 0] = 2*vWall[0] - v[:, 1]
+        v[:, 0] = 2*vWall[0] - v[:, 1]  # wall
     # East
     u[:, -1] = uWall[1]
     if np.isnan(vWall[1]):
         v[:, -1] = v[:, -2]  # symmetry
     else:
-        v[:, -1] = 2*vWall[1] - v[:, -2]
+        v[:, -1] = 2*vWall[1] - v[:, -2]  # wall
     # South
     v[0, :] = vWall[2]
     if np.isnan(uWall[2]):
         u[0, :] = u[1, :]  # symmetry
     else:
-        u[0, :] = 2*uWall[2] - u[1, :]
+        u[0, :] = 2*uWall[2] - u[1, :]  # wall
     # North
     v[-1, :] = vWall[3]
     if np.isnan(uWall[3]):
         u[-1, :] = u[-2, :]  # symmetry
     else:
-        u[-1, :] = 2*uWall[3] - u[-2, :]
+        u[-1, :] = 2*uWall[3] - u[-2, :]  # wall
 
     return u, v
 
@@ -204,53 +219,89 @@ def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu):
 
     # Non-linear terms
     # u-velocity
-    u[1:-1, 1:-1] = un[1:-1, 1:-1] - (
-        dt/(dx)*(uah[1:-1, 1:]*uah[1:-1, 1:] -
-                 uah[1:-1, :-1]*uah[1:-1, :-1]) +
-        dt/(dy)*(vah[1:, 1:-1]*uav[1:, 1:-1] -
-                 vah[:-1, 1:-1]*uav[:-1, 1:-1]))
+    u[1:-1, 1:-1] = un[1:-1, 1:-1] - dt*(
+        1/(dx)*(uah[1:-1, 1:]*uah[1:-1, 1:] -
+                uah[1:-1, :-1]*uah[1:-1, :-1]) +
+        1/(dy)*(vah[1:, 1:-1]*uav[1:, 1:-1] -
+                vah[:-1, 1:-1]*uav[:-1, 1:-1]))
     # v-velocity
-    v[1:-1, 1:-1] = vn[1:-1, 1:-1] - (
-        dt/(dx)*(uav[1:-1, 1:]*vah[1:-1, 1:] -
-                 uav[1:-1, :-1]*vah[1:-1, :-1]) +
-        dt/(dy)*(vav[1:, 1:-1]*vav[1:, 1:-1] -
-                 vav[:-1, 1:-1]*vav[:-1, 1:-1]))
+    v[1:-1, 1:-1] = vn[1:-1, 1:-1] - dt*(
+        1/(dx)*(uav[1:-1, 1:]*vah[1:-1, 1:] -
+                uav[1:-1, :-1]*vah[1:-1, :-1]) +
+        1/(dy)*(vav[1:, 1:-1]*vav[1:, 1:-1] -
+                vav[:-1, 1:-1]*vav[:-1, 1:-1]))
 
     # Diffusive terms
     # u-velocity
-    u[1:-1, 1:-1] = u[1:-1, 1:-1] + \
-        nu * (
-            dt/dx**2*(u[1:-1, 2:]-2*u[1:-1, 1:-1]+u[1:-1, :-2]) +
-            dt/dy**2*(u[2:, 1:-1]-2*u[1:-1, 1:-1]+u[:-2, 1:-1]))
+    u[1:-1, 1:-1] = u[1:-1, 1:-1] + dt*(
+        nu * (1/dx**2*(u[1:-1, 2:]-2*u[1:-1, 1:-1]+u[1:-1, :-2]) +
+              1/dy**2*(u[2:, 1:-1]-2*u[1:-1, 1:-1]+u[:-2, 1:-1])))
     # v-velocity
-    v[1:-1, 1:-1] = v[1:-1, 1:-1] + \
-        nu * (
-            dt/dx**2*(v[1:-1, 2:]-2*v[1:-1, 1:-1]+v[1:-1, :-2]) +
-            dt/dy**2*(v[2:, 1:-1]-2*v[1:-1, 1:-1]+v[:-2, 1:-1]))
+    v[1:-1, 1:-1] = v[1:-1, 1:-1] + dt*(
+        nu * (1/dx**2*(v[1:-1, 2:]-2*v[1:-1, 1:-1]+v[1:-1, :-2]) +
+              1/dy**2*(v[2:, 1:-1]-2*v[1:-1, 1:-1]+v[:-2, 1:-1])))
 
     return u, v
 
 
 def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
 
-    # Interpolations
-    uahv = avg(avg(u, 1), 0)
-    vavh = avg(avg(v, 0), 1)
-
-    # Right hand side
-    b[1:-1, 1:-1] = rho*(
-        1/dt*((u[1:-1, 1:] - u[1:-1, :-1])/(2*dx) +
-              (v[1:, 1:-1] - v[:-1, 1:-1])/(2*dy)) -
-        (((u[1:-1, 1:] - u[1:-1, :-1])/(2*dx))**2 +
-         2*((uahv[1:, :] - uahv[:-1, :])/(2*dy) *
-            (vavh[:, 1:] - vavh[:, :-1])/(2*dx)) +
-         ((v[1:, 1:-1] - v[:-1, 1:-1])/(2*dy))**2))
-
     if poissonSolver == 'direct':
 
-        p.flat[:] = spla.spsolve(A, -b.flat[:])
+        # Right hand side
+#        b[1:-1, 1:-1] = rho/dt*(np.diff(u[1:-1, :], axis=1)/dx +
+#                                np.diff(v[:, 1:-1], axis=0)/dy)
+        
+        # Interpolations
+        uahv = avg(avg(u, 1), 0)
+        vavh = avg(avg(v, 0), 1)
+
+        b[1:-1, 1:-1] = rho*(
+            1/dt*((u[1:-1, 1:] - u[1:-1, :-1])/(dx) +
+                  (v[1:, 1:-1] - v[:-1, 1:-1])/(dy)) -
+            (((u[1:-1, 1:] - u[1:-1, :-1])/(dx))**2 +
+             2*((uahv[1:, :] - uahv[:-1, :])/(dy) *
+                (vavh[:, 1:] - vavh[:, :-1])/(dx)) +
+             ((v[1:, 1:-1] - v[:-1, 1:-1])/(dy))**2))
+
+        p[1:-1, 1:-1].flat[:] = -spla.spsolve(A, -b[1:-1, 1:-1].flat[:])
+        
+        # Boundary conditions
+        # West
+        if np.isnan(pWall[0]):
+            p[:, 0] = p[:, 1]  # symmetry
+        else:
+            p[:, 0] = 2*pWall[0] - p[:, 1]  # wall
+        # East
+        if np.isnan(pWall[1]):
+            p[:, -1] = p[:, -2]  # symmetry
+        else:
+            p[:, -1] = 2*pWall[1] - p[:, -2]  # wall
+        # South
+        if np.isnan(pWall[2]):
+            p[0, :] = p[1, :]  # symmetry
+        else:
+            p[0, :] = 2*pWall[2] - p[1, :]  # wall
+        # North
+        if np.isnan(pWall[3]):
+            p[-1, :] = p[-2, :]  # symmetry
+        else:
+            p[-1, :] = 2*pWall[3] - p[-2, :]  # wall
 
     elif (poissonSolver == 'iterative'):
+
+        # Interpolations
+        uahv = avg(avg(u, 1), 0)
+        vavh = avg(avg(v, 0), 1)
+
+        # Right hand side
+        b[1:-1, 1:-1] = rho*(
+            1/dt*((u[1:-1, 1:] - u[1:-1, :-1])/(dx) +
+                  (v[1:, 1:-1] - v[:-1, 1:-1])/(dy)) -
+            (((u[1:-1, 1:] - u[1:-1, :-1])/(dx))**2 +
+             2*((uahv[1:, :] - uahv[:-1, :])/(dy) *
+                (vavh[:, 1:] - vavh[:, :-1])/(dx)) +
+             ((v[1:, 1:-1] - v[:-1, 1:-1])/(dy))**2))
 
         # Solve iteratively for pressure
         for nit in range(50):
@@ -258,28 +309,6 @@ def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
             p[1:-1, 1:-1] = (dy**2*(p[1:-1, 2:]+p[1:-1, :-2]) +
                              dx**2*(p[2:, 1:-1]+p[:-2, 1:-1]) -
                              b[1:-1, 1:-1]*dx**2*dy**2)/(2*(dx**2+dy**2))
-
-            # Boundary conditions
-            # West
-            if np.isnan(pWall[0]):
-                p[:, 0] = p[:, 1]  # symmetry
-            else:
-                p[:, 0] = pWall[0]
-            # East
-            if np.isnan(pWall[1]):
-                p[:, -1] = p[:, -2]  # symmetry
-            else:
-                p[:, -1] = pWall[1]
-            # South
-            if np.isnan(pWall[2]):
-                p[0, :] = p[1, :]  # symmetry
-            else:
-                p[0, :] = pWall[2]
-            # North
-            if np.isnan(pWall[3]):
-                p[-1, :] = p[-2, :]  # symmetry
-            else:
-                p[-1, :] = pWall[3]
 
             # Reference pressure in ONE of the corners [SW, NW, NE, SE]
             # South West
@@ -300,10 +329,10 @@ def solvePoissonEquation(p, pn, b, rho, dt, dx, dy, u, v, nit, pWall):
 
 def correctPressure(u, v, p, rho, dt, dx, dy):
 
-    u[1:-1, 1:-1] = u[1:-1, 1:-1] - 1/rho*dt * \
-        (p[1:-1, 2:-1]-p[1:-1, 1:-2])/(2*dx)
-    v[1:-1, 1:-1] = v[1:-1, 1:-1] - 1/rho*dt * \
-        (p[2:-1, 1:-1]-p[1:-2, 1:-1])/(2*dy)
+    u[1:-1, 1:-1] = u[1:-1, 1:-1] - dt/rho * \
+        (p[1:-1, 2:-1]-p[1:-1, 1:-2])/(dx)
+    v[1:-1, 1:-1] = v[1:-1, 1:-1] - dt/rho * \
+        (p[2:-1, 1:-1]-p[1:-2, 1:-1])/(dy)
 
     return u, v
 
