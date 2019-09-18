@@ -80,25 +80,50 @@ divU = np.diff(avg(uf, 0), axis=1)/np.diff(Xf[1:, :], axis=1) + \
 plt.close('all')
 figureSize = (10, 6.25)
 colormap1 = 'jet'
+minContour1 = -5
+maxContour1 = 5
+minContour2 = -1
+maxContour2 = 1
 fig = plt.figure(figsize=figureSize, dpi=100)
 
+# Plot pressure and velocity
 # Axis
-ax1 = fig.add_subplot(111)
+ax1 = fig.add_subplot(121)
 ax1.set_aspect(1)
 ax1.set_xlabel('x')
 ax1.set_ylabel('y')
 ax1.set_title('Pressure contours and velocity vectors')
-# Filled contours for pressure at faces
-
-ctf1 = ax1.contourf(Xf, Yf, pf, 41, cmap=colormap1)
+# Contours of pressure
+plotContourLevels1 = np.linspace(minContour1, maxContour1, num=41)
+ctf1 = ax1.contourf(Xf, Yf, pf, plotContourLevels1,
+                    extend='both', cmap=colormap1)
 # Colorbar
 divider1 = make_axes_locatable(ax1)
 cax1 = divider1.append_axes("right", size="5%", pad=0.1)
-cBar1 = fig.colorbar(ctf1, cax=cax1, extendrect=True)
+ticks1 = np.linspace(minContour1, maxContour1, num=7)
+cBar1 = fig.colorbar(ctf1, cax=cax1, extendrect=True, ticks=ticks1)
 cBar1.set_label('p / Pa')
 # plot velocity vectors
 m = 1
 ax1.quiver(X[::m, ::m], Y[::m, ::m],
            uc[::m, ::m], vc[::m, ::m])
+
+# Plot divergence of velocity
+# Axis
+ax2 = fig.add_subplot(122)
+ax2.set_aspect(1)
+ax2.set_xlabel('x')
+ax2.set_ylabel('y')
+ax2.set_title('Divergence of velocity')
+# Pcolor of divergence
+plotContourLevels2 = np.linspace(minContour2, maxContour2, num=41)
+ctf2 = ax2.contourf(X, Y, divU,
+                    plotContourLevels2, extend='both', cmap=colormap1)
+# Colorbar
+divider2 = make_axes_locatable(ax2)
+cax2 = divider2.append_axes("right", size="5%", pad=0.1)
+ticks2 = np.linspace(minContour2, maxContour2, num=7)
+cBar2 = fig.colorbar(ctf2, cax=cax2, extendrect=True, ticks=ticks2)
+cBar2.set_label('div (U) / 1/s')
 
 plt.tight_layout()
