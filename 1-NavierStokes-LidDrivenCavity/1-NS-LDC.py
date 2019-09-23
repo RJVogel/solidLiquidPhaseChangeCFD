@@ -82,11 +82,15 @@ yf = np.linspace(ymin, ymax, ny+1)
 Xf, Yf = np.meshgrid(xf, yf)
 
 # Initial values
+p = np.zeros((ny+2, nx+2))
 u = np.zeros((ny+2, nx+1))
 v = np.zeros((ny+1, nx+2))
-p = np.zeros((ny+2, nx+2))
-b = np.zeros((ny, nx))
-bc = np.zeros((ny, nx))
+rhs_p = np.zeros((ny, nx))
+rhs_u = np.zeros((ny, nx-1))
+rhs_v = np.zeros((ny-1, nx))
+rhs_p_bound = np.zeros((ny, nx))
+rhs_u_bound = np.zeros((ny, nx-1))
+rhs_v_bound = np.zeros((ny-1, nx))
 
 # Functions ====================================================================
 
@@ -180,7 +184,54 @@ def animateContoursAndVelocityVectors(plotLevels1, plotLevels2, figureSize,
     return fig, ax1, ax2
 
 
-def build1dpoissonmatrix(n, direction, wallBC):
+def buildSystemOfEquations(nx, ny, dx, dy, wallBC,
+                           dirichletBetweenNodes=(False, False)):
+
+    # System matrix
+
+    # Identity matrices
+    Ix = sps.eye(nx)
+    Iy = sps.eye(ny)
+    # 1D coefficient matrices x- and y-direction
+    Ax1d = build1dpoissonmatrix(nx, 1, wallBC, dirichletBetweenNodes)/(dx*dx)
+    Ay1d = build1dpoissonmatrix(ny, 0, wallBC, dirichletBetweenNodes)/(dy*dy)
+    # Full 2d coefficient matrices x- and y-direction
+    Ax = sps.kron(Iy, Ax1d)
+    Ay = sps.kron(Ay1d, Ix)
+    # Full 2d coefficient matrix
+    A = sps.csr_matrix(Ax + Ay)
+
+    # Set Dirichlet BC: Constant part goes in RHS
+    rhs_bound = np.zeros((ny, nx))
+    # West
+    if not np.isnan(wallBC[1][0]):
+        if dirichletBetweenNodes[1]:
+            rhs_bound[:, 0] = -2*wallBC[1][0]/(dx*dx)
+        else:
+            rhs_bound[:, 0] = -1*wallBC[1][0]/(dx*dx)
+    # East
+    if not np.isnan(wallBC[1][1]):
+        if dirichletBetweenNodes[1]:
+            rhs_bound[:, -1] = -2*wallBC[1][1]/(dx*dx)
+        else:
+            rhs_bound[:, -1] = -1*wallBC[1][1]/(dx*dx)
+    # South
+    if not np.isnan(wallBC[0][0]):
+        if dirichletBetweenNodes[0]:
+            rhs_bound[0, :] = -2*wallBC[0][0]/(dy*dy)
+        else:
+            rhs_bound[0, :] = -1*wallBC[0][0]/(dy*dy)
+    # North
+    if not np.isnan(wallBC[0][1]):
+        if dirichletBetweenNodes[0]:
+            rhs_bound[-1, :] = -2*wallBC[0][1]/(dy*dy)
+        else:
+            rhs_bound[-1, :] = -1*wallBC[0][1]/(dy*dy)
+
+    return A, rhs_bound
+
+
+def build1dpoissonmatrix(n, direction, wallBC, dirichletBetweenNodes):
     # Poisson Matrix 1D
 
     # Neighbor coefficients
@@ -190,12 +241,12 @@ def build1dpoissonmatrix(n, direction, wallBC):
     # South/West boundary
     if np.isnan(wallBC[direction][0]):
         ep[:, 0] += 1  # Neumann boundary condition
-    else:
+    elif dirichletBetweenNodes[direction]:
         ep[:, 0] += -1  # Dirichlet BC for boundary between nodes
     # North/East boundary
     if np.isnan(wallBC[direction][1]):
         ep[:, -1] += 1  # Neumann boundary condition
-    else:
+    elif dirichletBetweenNodes[direction]:
         ep[:, -1] += -1  # Dirichlet BC for boundary between nodes
     # return 1D coefficient matrix
     return sps.spdiags((ep.ravel(), en.ravel(), en.ravel()),
@@ -237,27 +288,27 @@ def solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu):
     return u, v
 
 
-def correctPressure(p, pn, b, bc, rho, dt, dx, dy, u, v, pWall, amg_pre, Ap, M):
+def correctPressure(u, v, p, A, rhs, rhs_bound, rho, dt, dx, dy, amg_pre, M):
 
     # Poisson equation
-
     # Right hand side
-    b[:, :] = rho/dt*(np.diff(u[1:-1, :], axis=1)/dx +
-                      np.diff(v[:, 1:-1], axis=0)/dy) + bc[:, :]
+    rhs[:, :] = rho/dt*(np.diff(u[1:-1, :], axis=1)/dx +
+                        np.diff(v[:, 1:-1], axis=0)/dy) + rhs_bound[:, :]
     # Solve linear system
     if amg_pre:
         [p[1:-1, 1:-1].flat[:], info] = spla.bicgstab(
-            Ap, b.ravel(), x0=p[1:-1, 1:-1].ravel(), tol=1e-9, maxiter=100, M=M)
+            A, rhs.ravel(), x0=p[1:-1, 1:-1].ravel(),
+            tol=1e-9, maxiter=100, M=M)
     else:
-        p[1:-1, 1:-1].flat[:] = spla.spsolve(Ap, b.ravel())
+        p[1:-1, 1:-1].flat[:] = spla.spsolve(A, rhs.ravel())
 
-    # Project corrected pressure on velocity field
+    # Project corrected pressure onto velocity field
     u[1:-1, 1:-1] = u[1:-1, 1:-1] - dt/rho * \
         (p[1:-1, 2:-1]-p[1:-1, 1:-2])/(dx)
     v[1:-1, 1:-1] = v[1:-1, 1:-1] - dt/rho * \
         (p[2:-1, 1:-1]-p[1:-2, 1:-1])/(dy)
 
-    return u, v, p
+    return u, v, p, rhs
 
 
 def setBoundaryConditions(u, v, p, uWall, vWall, pWall):
@@ -289,7 +340,7 @@ def setBoundaryConditions(u, v, p, uWall, vWall, pWall):
     else:
         u[-1, :] = 2*uWall[0][1] - u[-2, :]  # wall
 
-    # Pressure (Only needed for correct plotting)
+    # Pressure (Only needed for plotting)
 
     # West
     if np.isnan(pWall[1][0]):
@@ -345,51 +396,43 @@ def calcDerived(Xf, Yf, p, u, v, dx, dy, nu, dt0):
     Vis_x = dt0*(2*nu)/dx**2
     Vis_y = dt0*(2*nu)/dy**2
 
-    return pf, uc, vc, U, uMax, vMax, divU, Pe_u, Pe_v, CFL_u, CFL_v, \
-        Vis_x, Vis_y
+    return pf, uc, vc, ucorn, vcorn, U, uMax, vMax, divU, \
+        Pe_u, Pe_v, CFL_u, CFL_v, Vis_x, Vis_y
 
 
 # PREPROCESSING ================================================================
 
 # Poisson equation for pressure
 
-# Identity matrices
-Ix = sps.eye(nx)
-Iy = sps.eye(ny)
-# 1D coefficient matrices x- and y-direction
-Apx1d = build1dpoissonmatrix(nx, 1, pWall)/(dx*dx)
-Apy1d = build1dpoissonmatrix(ny, 0, pWall)/(dy*dy)
-# Full 2d coefficient matrices x- and y-direction
-Apx = sps.kron(Iy, Apx1d)
-Apy = sps.kron(Apy1d, Ix)
-# Full 2d coefficient matrix
-Ap = sps.csr_matrix(Apx + Apy)
+# Build system matrix for pressure
+[A_p, rhs_p_bound] = buildSystemOfEquations(nx, ny, dx, dy,
+                                            pWall, (True, True))
 # Set zero pressure at boundary nodes in SW corner, if only Neumann boundaries
 if np.all(np.isnan(pWall)):
-    Ap[0, 0] = 3/2*Ap[0, 0]
-# Set Dirichlet BC: Constant part goes in RHS
-# West
-if not np.isnan(pWall[1][0]):
-    bc[:, 0] = -2*pWall[1][0]
-# East
-if not np.isnan(pWall[1][1]):
-    bc[:, -1] = -2*pWall[1][1]
-# South
-if not np.isnan(pWall[0][0]):
-    bc[0, :] = -2*pWall[0][0]
-# North
-if not np.isnan(pWall[0][1]):
-    bc[-1, :] = -2*pWall[0][1]
+    A_p[0, 0] = 3/2*A_p[0, 0]
+
+# Poisson equations for velocities
+
+# Build system matrix for u
+# [A_u, rhs_u_bound] = buildSystemOfEquations(nx-1, ny, dx, dy,
+#                                             uWall, (True, False))
+
+# Build system matrix for u
+# [A_v, rhs_v_bound] = buildSystemOfEquations(nx, ny-1, dx, dy,
+#                                             vWall, (False, True))
 
 # Algebraic Multigrid (AMG) as preconditioner
 if amg_pre:
     import pyamg
-    ml = pyamg.smoothed_aggregation_solver(Ap, max_coarse=10)
-    M = ml.aspreconditioner(cycle='V')
+    ml = pyamg.smoothed_aggregation_solver(A_p, max_coarse=10)
+    M_p = ml.aspreconditioner(cycle='V')
+else:
+    M_p = np.nan
 
 # Calculate derived quantities
-[pf, uc, vc, U, uMax, vMax, divU, Pe_u, Pe_v, CFL_u, CFL_v, Vis_x, Vis_y] = \
-    calcDerived(Xf, Yf, p, u, v, dx, dy, nu, dt0)
+[pf, uc, vc, ucorn, vcorn, U, uMax, vMax, divU,
+ Pe_u, Pe_v, CFL_u, CFL_v, Vis_x, Vis_y] = calcDerived(
+     Xf, Yf, p, u, v, dx, dy, nu, dt0)
 
 # Plot
 [fig, ax1, ax2] = animateContoursAndVelocityVectors(plotLevels1, plotLevels2,
@@ -420,16 +463,17 @@ while t < tMax:
     # Intermediate velocity field u*
     [u, v] = solveMomentumEquation(u, v, un, vn, dt, dx, dy, nu)
     # Pressure correction
-    [u, v, p] = correctPressure(p, pn, b, bc, rho, dt, dx, dy, u, v, pWall,
-                                amg_pre, Ap, M)
+    [u, v, p, rhs_p] = correctPressure(u, v, p, A_p, rhs_p, rhs_p_bound,
+                                       rho, dt, dx, dy, amg_pre, M_p)
     # Update boundary values
     [u, v, p] = setBoundaryConditions(u, v, p, uWall, vWall, pWall)
 
     if (t-tOut) > -1e-6:
 
         # Calculate derived quantities
-        [pf, uc, vc, U, uMax, vMax, divU, Pe_u, Pe_v, CFL_u, CFL_v,
-         Vis_x, Vis_y] = calcDerived(Xf, Yf, p, u, v, dx, dy, nu, dt0)
+        [pf, uc, vc, ucorn, vcorn, U, uMax, vMax, divU,
+         Pe_u, Pe_v, CFL_u, CFL_v, Vis_x, Vis_y] = calcDerived(
+             Xf, Yf, p, u, v, dx, dy, nu, dt0)
 
         print("==============================================================")
         print(" Time step n = %d, t = %8.3f, dt0 = %4.1e, t_wall = %4.1f" %
@@ -438,7 +482,8 @@ while t < tMax:
               (uMax, CFL_u, Pe_u, Vis_x))
         print(" max|v| = %5.2e, CFL(v) = %5.2f, Pe(v) = %5.2f, Vis(y) = %5.2f" %
               (vMax, CFL_v, Pe_v, Vis_y))
-        print(" Residual: ", np.linalg.norm(b.ravel()-Ap*p[1:-1, 1:-1].ravel()))
+        print(" Residuals p: ",
+              np.linalg.norm(rhs_p.ravel()-A_p*p[1:-1, 1:-1].ravel()))
 
         tOut += dtOut
 
