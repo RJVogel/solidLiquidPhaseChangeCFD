@@ -10,6 +10,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
+# Configuration
+saveFiguresToFile = True
+outputFilename = 'openFoam_liddrivencavity_Re20'
+t = 1
+plt.close('all')
+figureSize = (6, 6)
+plotLevels1 = (-5, 5)
+plotLevels2 = (-1, 1)
+colormap1 = 'bwr'
+colormap2 = 'seismic'
+plotEveryMthVector = 1
+plotDivergence = False
+
 
 def avg(array, axis):
 
@@ -25,7 +38,7 @@ def avg(array, axis):
 
 
 # grid is the central object in VTK where every field is added on to grid
-grid = pv.UnstructuredGrid('cavity_1000.vtk')
+grid = pv.UnstructuredGrid('liddrivencavity_1000.vtk')
 
 # grid points
 points = grid.points
@@ -77,53 +90,72 @@ divU = np.diff(avg(uf, 0), axis=1)/np.diff(Xf[1:, :], axis=1) + \
 # Plot
 
 # Figure
-plt.close('all')
-figureSize = (10, 6.25)
-colormap1 = 'jet'
-minContour1 = -5
-maxContour1 = 5
-minContour2 = -1
-maxContour2 = 1
 fig = plt.figure(figsize=figureSize, dpi=100)
 
-# Plot pressure and velocity
+# Levels
+if plotLevels1 == (None, None):
+    plotLevels1 = (np.min(pf)-1e-12, np.max(pf)+1e-12)
+if plotLevels2 == (None, None):
+    plotLevels2 = (np.min(divU)-1e-12, np.max(divU)+1e-12)
+
+plotContourLevels1 = np.linspace(plotLevels1[0], plotLevels1[1], num=40)
+plotContourLevels2 = np.linspace(plotLevels2[0], plotLevels2[1], num=40)
+
+m = plotEveryMthVector
+
+# Create figure
+fig = plt.figure(figsize=figureSize, dpi=100)
+# Create axis 1
 # Axis
-ax1 = fig.add_subplot(121)
+if plotDivergence:
+    ax1 = fig.add_subplot(121)
+else:
+    ax1 = fig.add_subplot(111)
 ax1.set_aspect(1)
 ax1.set_xlabel('x')
 ax1.set_ylabel('y')
-ax1.set_title('Pressure contours and velocity vectors')
+ax1.set_title('OpenFOAM: Pressure contours and velocity vectors')
+
 # Contours of pressure
-plotContourLevels1 = np.linspace(minContour1, maxContour1, num=41)
 ctf1 = ax1.contourf(Xf, Yf, pf, plotContourLevels1,
                     extend='both', cmap=colormap1)
-# Colorbar
+
+# Colorbar 1
 divider1 = make_axes_locatable(ax1)
 cax1 = divider1.append_axes("right", size="5%", pad=0.1)
-ticks1 = np.linspace(minContour1, maxContour1, num=7)
+ticks1 = np.linspace(plotLevels1[0], plotLevels1[1], num=11)
 cBar1 = fig.colorbar(ctf1, cax=cax1, extendrect=True, ticks=ticks1)
 cBar1.set_label('p / Pa')
-# plot velocity vectors
-m = 1
-ax1.quiver(X[::m, ::m], Y[::m, ::m],
-           uc[::m, ::m], vc[::m, ::m])
 
-# Plot divergence of velocity
-# Axis
-ax2 = fig.add_subplot(122)
-ax2.set_aspect(1)
-ax2.set_xlabel('x')
-ax2.set_ylabel('y')
-ax2.set_title('Divergence of velocity')
-# Pcolor of divergence
-plotContourLevels2 = np.linspace(minContour2, maxContour2, num=41)
-ctf2 = ax2.contourf(X, Y, divU,
-                    plotContourLevels2, extend='both', cmap=colormap1)
-# Colorbar
-divider2 = make_axes_locatable(ax2)
-cax2 = divider2.append_axes("right", size="5%", pad=0.1)
-ticks2 = np.linspace(minContour2, maxContour2, num=7)
-cBar2 = fig.colorbar(ctf2, cax=cax2, extendrect=True, ticks=ticks2)
-cBar2.set_label('div (U) / 1/s')
+# plot velocity vectors
+ax1.quiver(X[::m, ::m], Y[::m, ::m],
+           uc[::m, ::m]+1e-12, vc[::m, ::m]+1e-12)
+
+if plotDivergence:
+    # Create axis 2
+    # Axis
+    ax2 = fig.add_subplot(122)
+    ax2.set_aspect(1)
+    ax2.set_xlabel('x')
+    ax2.set_ylabel('y')
+    ax2.set_title('OpenFOAM: Divergence of velocity')
+
+    # Contours of divergence
+    ctf2 = ax2.contourf(X, Y, divU,
+                        plotContourLevels2, extend='both',
+                        cmap=colormap2)
+
+    # Colorbar 2
+    divider2 = make_axes_locatable(ax2)
+    cax2 = divider2.append_axes("right", size="5%", pad=0.1)
+    ticks2 = np.linspace(plotLevels2[0], plotLevels2[1], num=11)
+    cBar2 = fig.colorbar(ctf2, cax=cax2, extendrect=True, ticks=ticks2)
+    cBar2.set_label('div (U) / 1/s')
+
+if saveFiguresToFile:
+    formattedFilename = '{0}_{1:5.3f}.png'.format(outputFilename, t)
+    path = formattedFilename
+    fig.savefig(path)
 
 plt.tight_layout()
+plt.show()
