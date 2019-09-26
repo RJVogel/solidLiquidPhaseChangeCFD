@@ -11,18 +11,20 @@ Navier Stokes solver for lid driven cavity flow
 # Libraries ====================================================================
 
 import numpy as np
+import matplotlib.pyplot as plt
 from scipy import sparse as sps
 import scipy.sparse.linalg as spla
-import matplotlib.pyplot as plt
-from mpl_toolkits.axes_grid1 import make_axes_locatable
 import time
 from pathlib import Path
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 # Configuration and initialization =============================================
 
 # Constants
 NAN = np.nan
+
+# Discretization ---------------------------------------------------------------
 
 # Geometry
 xmin = 0.
@@ -34,7 +36,22 @@ ymax = 1.0
 dx = 0.05
 dy = 0.05
 
+# Temporal discretization
+tMax = 5.
+dt = 0.05
+
+
+# Momentum equations -----------------------------------------------------------
+
+# Material properties
+
+# Density
+rho = 1.0
+# Kinematic viscosity
+nu = 0.1/rho
+
 # Boundary conditions
+
 # Wall x-velocity: [[S, N]
 #                   [W, E]], NAN = symmetry
 uWall = [[0., 1.],
@@ -48,56 +65,45 @@ vWall = [[0., 0.],
 pWall = [[NAN, NAN],
          [NAN, NAN]]
 
-# Material properties
-rho = 1.0
-mu = 0.05
-nu = mu/rho
+# Solver: Use AMG preconditioner and BICGSTAB solver? Otherwise direct solver
+# Viscous laplace term in momentum equation
+precond_viscous = True
+# Poisson equation for pressure
+precond_pressure = True
 
-# Temporal discretization
-tMax = 5.
-dt0 = 0.05
 
-# Solver
-amg_pre = True
+# Visualization ----------------------------------------------------------------
 
-# Visualization
-dtOut = 1.0  # Output step length
-dtPlot = 5.0  # Plot step length
+# Output control
+
+# Print step
+dtOut = 1.0
+# Plot step
+dtPlot = tMax  # Plot step length
+
+# Plots
+
+# Figure size on screen
+figureSize = (7, 6)
+# Use inline graphics
 inlineGraphics = True
-nOut = int(round(tMax/dtOut))
-figureSize = (6, 6)
-plotDivergence = False
-plotLevels1 = (-1, 1)
-plotLevels2 = (-1e-3, 1e-3)
-plotEveryMthVector = 1
-colormap1 = 'bwr'
-colormap2 = 'seismic'
-saveFiguresToFile = True
-outputFilename = 'liddrivencavity_Re20'
 
-# Mesh generation
-# Number of inner points
-nx = int((xmax-xmin)/dx)
-ny = int((ymax-ymin)/dy)
-# Centers with boundary nodes
-x = np.linspace(xmin-dx/2, xmax+dx/2, nx+2)
-y = np.linspace(ymin-dy/2, ymax+dy/2, ny+2)
-X, Y = np.meshgrid(x, y)
-# Faces with boundary nodes
-xf = np.linspace(xmin, xmax, nx+1)
-yf = np.linspace(ymin, ymax, ny+1)
-Xf, Yf = np.meshgrid(xf, yf)
+# Plot definition
+plotContourVar = 'p'  # 'p', u, v, 'U', 'divU'
+plotFaceValues = True
+plotVelocityVectorsEvery = 1
+plotLevels = (-2, 2)
+colormap = 'bwr'
 
-# Initial values
-p = np.zeros((ny+2, nx+2))
-u = np.zeros((ny+2, nx+1))
-v = np.zeros((ny+1, nx+2))
-rhs_p = np.zeros((ny, nx))
-rhs_u = np.zeros((ny, nx-1))
-rhs_v = np.zeros((ny-1, nx))
-rhs_p_bound = np.zeros((ny, nx))
-rhs_u_bound = np.zeros((ny, nx-1))
-rhs_v_bound = np.zeros((ny-1, nx))
+# Save to file
+saveFiguresToFile = False
+figureFilename = 'liddrivencavity_Re100'
+
+# Profile
+writeProfile = False
+profileFilename = ''
+profilePoint = [0.5, 0.5]
+profileDirection = 0
 
 
 # Functions ====================================================================
@@ -113,89 +119,92 @@ def avg(array, axis):
     elif axis == 1:
         return (array[:, :-1]+array[:, 1:])/2
     else:
-        return NAN
+        return np.nan
 
 
-def animateContoursAndVelocityVectors(plotDivergence, plotLevels1, plotLevels2,
-                                      m, figureSize,
-                                      fig=None, ax1=None, ax2=None):
+def animateContoursAndVelocityVectors(inlineGraphics, plotContourVar,
+                                      plotFaceValues, plotLevels,
+                                      plotVelocityVectorsEvery, figureSize,
+                                      fig=None, ax=None):
 
-    # Levels
-    if plotLevels1 == (None, None):
-        plotLevels1 = (np.min(pf)-1e-12, np.max(pf)+1e-12)
-    if plotLevels2 == (None, None):
-        plotLevels2 = (np.min(divU)-1e-12, np.max(divU)+1e-12)
+    # Font
+    font = {'family': 'DejaVu Sans',
+            'weight': 'normal',
+            'size': 12}
+    plt.rc('font', **font)
 
-    plotContourLevels1 = np.linspace(plotLevels1[0], plotLevels1[1], num=40)
-    plotContourLevels2 = np.linspace(plotLevels2[0], plotLevels2[1], num=40)
-
-    if fig is None:
-
+    if fig is None or inlineGraphics:
         # Create figure
-        fig = plt.figure(figsize=figureSize, dpi=100)
-        # Create axis 1
-        # Axis
-        if plotDivergence:
-            ax1 = fig.add_subplot(121)
-        else:
-            ax1 = fig.add_subplot(111)
+        fig = plt.figure(figsize=figureSize, dpi=72)
+        # Create axis
+        ax1 = fig.add_subplot(111)
         ax1.set_aspect(1)
         ax1.set_xlabel('x')
         ax1.set_ylabel('y')
-        ax1.set_title('Pressure contours and velocity vectors')
 
-        # Contours of pressure
-        ctf1 = ax1.contourf(Xf, Yf, pf, plotContourLevels1,
-                            extend='both', cmap=colormap1)
+    # Select plot variable
+    if plotContourVar == 'p':
+        if plotFaceValues:
+            var = pcorn
+        else:
+            var = p[1:-1, 1:-1]
+        label = 'p / Pa'
+    elif plotContourVar == 'u':
+        if plotFaceValues:
+            var = ucorn
+        else:
+            var = uc[1:-1, :]
+        label = 'u / m/s'
+    elif plotContourVar == 'v':
+        if plotFaceValues:
+            var = vcorn
+        else:
+            var = vc[:, 1:-1]
+        label = 'v / m/s'
+    elif plotContourVar == 'U':
+        if plotFaceValues:
+            var = Ucorn
+        else:
+            var = Uc
+        label = 'U / m/s'
+    elif plotContourVar == 'divU':
+        var = divU
+        label = 'div (U) / 1/s'
+        plotFaceValues = False
 
-        # Colorbar 1
+    # Plot levels
+    if plotLevels == (None, None):
+        plotLevels = (np.min(var)-1e-12, np.max(var)+1e-12)
+
+    # Plot contours/pcolor
+    plotContourLevels = np.linspace(plotLevels[0], plotLevels[1], num=40)
+    if plotFaceValues:
+        ctf1 = ax1.contourf(Xf, Yf, var, plotContourLevels, cmap=colormap,
+                            extend='both')
+    else:
+        ctf1 = ax1.pcolor(Xf, Yf, var, vmin=plotLevels[0], vmax=plotLevels[1],
+                          cmap=colormap)
+
+    # Velocity vectors
+    if plotVelocityVectorsEvery >= 1:
+        m = plotVelocityVectorsEvery
+        m0 = int(np.ceil(m/2)-1)
+        ax1.quiver(X[1:-1, 1:-1][m0::m, m0::m], Y[1:-1, 1:-1][m0::m, m0::m],
+                   uc[1:-1, :][m0::m, m0::m]+1e-12,
+                   vc[:, 1:-1][m0::m, m0::m]+1e-12)
+
+    if fig is None or inlineGraphics:
+        # Colorbar
         divider1 = make_axes_locatable(ax1)
         cax1 = divider1.append_axes("right", size="5%", pad=0.1)
-        ticks1 = np.linspace(plotLevels1[0], plotLevels1[1], num=11)
+        ticks1 = np.linspace(plotLevels[0], plotLevels[1], num=11)
         cBar1 = fig.colorbar(ctf1, cax=cax1, extendrect=True, ticks=ticks1)
-        cBar1.set_label('p / Pa')
+        cBar1.set_label(label)
 
-        # plot velocity vectors
-        ax1.quiver(X[1:-1, 1:-1][::m, ::m], Y[1:-1, 1:-1][::m, ::m],
-                   uc[1:-1, :][::m, ::m]+1e-12, vc[:, 1:-1][::m, ::m]+1e-12)
+    plt.tight_layout()
+    plt.show()
 
-        if plotDivergence:
-            # Create axis 2
-            # Axis
-            ax2 = fig.add_subplot(122)
-            ax2.set_aspect(1)
-            ax2.set_xlabel('x')
-            ax2.set_ylabel('y')
-            ax2.set_title('Divergence of velocity')
-
-            # Contours of divergence
-            ctf2 = ax2.contourf(X[1:-1, 1:-1], Y[1:-1, 1:-1], divU,
-                                plotContourLevels2, extend='both',
-                                cmap=colormap2)
-
-            # Colorbar 2
-            divider2 = make_axes_locatable(ax2)
-            cax2 = divider2.append_axes("right", size="5%", pad=0.1)
-            ticks2 = np.linspace(plotLevels2[0], plotLevels2[1], num=11)
-            cBar2 = fig.colorbar(ctf2, cax=cax2, extendrect=True, ticks=ticks2)
-            cBar2.set_label('div (U) / 1/s')
-
-        plt.tight_layout()
-        plt.show()
-    else:
-        # Contours of pressure
-        ctf1 = ax1.contourf(Xf, Yf, pf, plotContourLevels1,
-                            extend='both', cmap=colormap1)
-        # plot velocity vectors
-        ax1.quiver(X[1:-1, 1:-1][::m, ::m], Y[1:-1, 1:-1][::m, ::m],
-                   uc[1:-1, :][::m, ::m], vc[:, 1:-1][::m, ::m])
-        if plotDivergence:
-            # Contours of divergence
-            ctf2 = ax2.contourf(X[1:-1, 1:-1], Y[1:-1, 1:-1], divU,
-                                plotContourLevels2, extend='both',
-                                cmap=colormap2)
-
-    return fig, ax1, ax2
+    return fig, ax
 
 
 def buildPoissonEquation(nx, ny, dx, dy, wallBC,
@@ -290,8 +299,8 @@ def solveMomentumNonLinearTerms(u, v, un, vn, dt, dx, dy):
     return u, v
 
 
-def solveMomentumDiffusiveTerms(u, v, dt, dx, dy, nu, A_u, A_v, rhs_u, rhs_v,
-                                rhs_u_bound, rhs_v_bound, amg_pre, M_u, M_v):
+def solveMomentumViscousTerms(u, v, dt, dx, dy, nu, A_u, A_v, rhs_u, rhs_v,
+                              rhs_u_bound, rhs_v_bound, amg_pre, M_u, M_v):
 
     # Right hand sides
     rhs_u[:, :] = u[1:-1, 1:-1] + rhs_u_bound[:, :]
@@ -301,10 +310,10 @@ def solveMomentumDiffusiveTerms(u, v, dt, dx, dy, nu, A_u, A_v, rhs_u, rhs_v,
     if amg_pre:
         [u[1:-1, 1:-1].flat[:], info] = spla.bicgstab(
             A_u, rhs_u.ravel(), x0=u[1:-1, 1:-1].ravel(),
-            tol=1e-7, maxiter=100, M=M_u)
+            tol=1e-6, maxiter=100, M=M_u)
         [v[1:-1, 1:-1].flat[:], info] = spla.bicgstab(
             A_v, rhs_v.ravel(), x0=v[1:-1, 1:-1].ravel(),
-            tol=1e-7, maxiter=100, M=M_v)
+            tol=1e-6, maxiter=100, M=M_v)
     else:
         u[1:-1, 1:-1].flat[:] = spla.spsolve(A_u, rhs_u.ravel())
         v[1:-1, 1:-1].flat[:] = spla.spsolve(A_v, rhs_v.ravel())
@@ -331,7 +340,7 @@ def correctPressure(u, v, p, A, rhs, rhs_bound, rho, dt, dx, dy, amg_pre, M):
     if amg_pre:
         [p[1:-1, 1:-1].flat[:], info] = spla.bicgstab(
             A, rhs.ravel(), x0=p[1:-1, 1:-1].ravel(),
-            tol=1e-8, maxiter=100, M=M)
+            tol=1e-9, maxiter=100, M=M)
     else:
         p[1:-1, 1:-1].flat[:] = spla.spsolve(A, rhs.ravel())
 
@@ -404,16 +413,17 @@ def setBoundaryConditions(u, v, p, uWall, vWall, pWall):
     return u, v, p
 
 
-def calcDerived(Xf, Yf, p, u, v, dx, dy, nu, dt0):
+def calcDerived(Xf, Yf, p, u, v, dx, dy, nu, dt):
 
     # Pressure at cell corners
-    pf = avg(avg(p, 0), 1)
+    pcorn = avg(avg(p, 0), 1)
     # Velocities
     uc = avg(u, 1)
     vc = avg(v, 0)
-    U = (uc[1:-1, :]**2+vc[:, 1:-1]**2)**0.5
+    Uc = (uc[1:-1, :]**2+vc[:, 1:-1]**2)**0.5
     ucorn = avg(u, 0)
     vcorn = avg(v, 1)
+    Ucorn = (ucorn**2+vcorn**2)**0.5
     uMax = np.max(np.abs(ucorn))
     vMax = np.max(np.abs(vcorn))
     # Divergence
@@ -423,17 +433,48 @@ def calcDerived(Xf, Yf, p, u, v, dx, dy, nu, dt0):
     Pe_u = uMax*dx/nu
     Pe_v = vMax*dy/nu
     # Courant Friedrichs Levy number
-    CFL_u = uMax*dt0/dx
-    CFL_v = vMax*dt0/dy
+    CFL_u = uMax*dt/dx
+    CFL_v = vMax*dt/dy
     # Viscous time step constraint
-    Vis_x = dt0*(2*nu)/dx**2
-    Vis_y = dt0*(2*nu)/dy**2
+    Vis_x = dt*(2*nu)/dx**2
+    Vis_y = dt*(2*nu)/dy**2
 
-    return pf, uc, vc, ucorn, vcorn, U, uMax, vMax, divU, \
+    return pcorn, uc, vc, ucorn, vcorn, Uc, Ucorn, uMax, vMax, divU, \
         Pe_u, Pe_v, CFL_u, CFL_v, Vis_x, Vis_y
 
 
 # PREPROCESSING ================================================================
+
+# Mesh generation
+
+# Number of inner points
+nx = int((xmax-xmin)/dx)
+ny = int((ymax-ymin)/dy)
+# Centers with boundary nodes
+x = np.linspace(xmin-dx/2, xmax+dx/2, nx+2)
+y = np.linspace(ymin-dy/2, ymax+dy/2, ny+2)
+X, Y = np.meshgrid(x, y)
+# Faces with boundary nodes
+xf = np.linspace(xmin, xmax, nx+1)
+yf = np.linspace(ymin, ymax, ny+1)
+Xf, Yf = np.meshgrid(xf, yf)
+
+# Initial values
+
+# Variables
+p = np.zeros((ny+2, nx+2))
+u = np.zeros((ny+2, nx+1))
+v = np.zeros((ny+1, nx+2))
+# Right hand sides
+rhs_p = np.zeros((ny, nx))
+rhs_u = np.zeros((ny, nx-1))
+rhs_v = np.zeros((ny-1, nx))
+# Right hand sides boundary part
+rhs_p_bound = np.zeros((ny, nx))
+rhs_u_bound = np.zeros((ny, nx-1))
+rhs_v_bound = np.zeros((ny-1, nx))
+
+# Generate system matrices
 
 # Poisson equation for pressure
 [A_p, rhs_p_bound] = buildPoissonEquation(nx, ny, dx, dy,
@@ -446,40 +487,37 @@ if np.all(np.isnan(pWall)):
 [A_u, rhs_u_bound] = buildPoissonEquation(nx-1, ny, dx, dy,
                                           uWall, (True, False))
 # Build equation system u** - nu*dt*laplace(u**) = u*
-A_u = sps.eye((nx-1)*ny) + dt0*nu*A_u
-rhs_u_bound = dt0*nu*rhs_u_bound
+A_u = sps.eye((nx-1)*ny) + dt*nu*A_u
+rhs_u_bound = dt*nu*rhs_u_bound
 
 # Poisson equation for v velocity
 [A_v, rhs_v_bound] = buildPoissonEquation(nx, ny-1, dx, dy,
                                           vWall, (False, True))
 # Build equation system v** - nu*dt*laplace(v**) = v*
-A_v = sps.eye(nx*(ny-1)) + dt0*nu*A_v
-rhs_v_bound = dt0*nu*rhs_v_bound
+A_v = sps.eye(nx*(ny-1)) + dt*nu*A_v
+rhs_v_bound = dt*nu*rhs_v_bound
 
 # Algebraic Multigrid (AMG) as preconditioner
-if amg_pre:
+if precond_pressure or precond_viscous:
     import pyamg
+if precond_pressure:
     ml = pyamg.smoothed_aggregation_solver(A_p, max_coarse=10)
     M_p = ml.aspreconditioner(cycle='V')
+if precond_viscous:
     ml = pyamg.smoothed_aggregation_solver(A_u, max_coarse=10)
     M_u = ml.aspreconditioner(cycle='V')
     ml = pyamg.smoothed_aggregation_solver(A_v, max_coarse=10)
     M_v = ml.aspreconditioner(cycle='V')
-else:
-    M_p = np.nan
-    M_u = np.nan
-    M_v = np.nan
 
 # Calculate derived quantities
-[pf, uc, vc, ucorn, vcorn, U, uMax, vMax, divU,
+[pcorn, uc, vc, ucorn, vcorn, Uc, Ucorn, uMax, vMax, divU,
  Pe_u, Pe_v, CFL_u, CFL_v, Vis_x, Vis_y] = calcDerived(
-     Xf, Yf, p, u, v, dx, dy, nu, dt0)
+     Xf, Yf, p, u, v, dx, dy, nu, dt)
 
 # Plot
-[fig, ax1, ax2] = animateContoursAndVelocityVectors(plotDivergence,
-                                                    plotLevels1, plotLevels2,
-                                                    plotEveryMthVector,
-                                                    figureSize)
+[fig, ax] = animateContoursAndVelocityVectors(
+    inlineGraphics, plotContourVar, plotFaceValues, plotLevels,
+    plotVelocityVectorsEvery, figureSize)
 
 
 # Time stepping ================================================================
@@ -494,7 +532,7 @@ while t < tMax:
 
     n += 1
 
-    dt = dt0
+    dt = dt
     t += dt
 
     # Update variables
@@ -506,14 +544,14 @@ while t < tMax:
 
     # Intermediate velocity field u*
     [u, v] = solveMomentumNonLinearTerms(u, v, un, vn, dt, dx, dy)
-    [u, v, rhs_u, rhs_v] = solveMomentumDiffusiveTerms(
+    [u, v, rhs_u, rhs_v] = solveMomentumViscousTerms(
         u, v, dt, dx, dy, nu, A_u, A_v, rhs_u, rhs_v,
-        rhs_u_bound, rhs_v_bound, amg_pre, M_u, M_v)
+        rhs_u_bound, rhs_v_bound, precond_viscous, M_u, M_v)
     Res_u = np.linalg.norm(rhs_u.ravel()-A_u*u[1:-1, 1:-1].ravel())
     Res_v = np.linalg.norm(rhs_v.ravel()-A_v*v[1:-1, 1:-1].ravel())
     # Pressure correction
     [u, v, p, rhs_p] = correctPressure(u, v, p, A_p, rhs_p, rhs_p_bound,
-                                       rho, dt, dx, dy, amg_pre, M_p)
+                                       rho, dt, dx, dy, precond_pressure, M_p)
     Res_p = np.linalg.norm(rhs_p.ravel()-A_p*p[1:-1, 1:-1].ravel())
     # Update boundary values
     [u, v, p] = setBoundaryConditions(u, v, p, uWall, vWall, pWall)
@@ -521,13 +559,13 @@ while t < tMax:
     if (t-tOut) > -1e-6:
 
         # Calculate derived quantities
-        [pf, uc, vc, ucorn, vcorn, U, uMax, vMax, divU,
+        [pcorn, uc, vc, ucorn, vcorn, Uc, Ucorn, uMax, vMax, divU,
          Pe_u, Pe_v, CFL_u, CFL_v, Vis_x, Vis_y] = calcDerived(
-             Xf, Yf, p, u, v, dx, dy, nu, dt0)
+             Xf, Yf, p, u, v, dx, dy, nu, dt)
 
         print("==============================================================")
-        print(" Time step n = %d, t = %8.3f, dt0 = %4.1e, t_wall = %4.1f" %
-              (n, t, dt0, time.time()-twall0))
+        print(" Time step n = %d, t = %8.3f, dt = %4.1e, t_wall = %4.1f" %
+              (n, t, dt, time.time()-twall0))
         print(" max|u| = %5.2e, CFL(u) = %5.2f, Pe(u) = %5.2f, Vis(x) = %5.2f" %
               (uMax, CFL_u, Pe_u, Vis_x))
         print(" max|v| = %5.2e, CFL(v) = %5.2f, Pe(v) = %5.2f, Vis(y) = %5.2f" %
@@ -535,29 +573,35 @@ while t < tMax:
         print(" Res(p) = %5.2e, Res(u) = %5.2e, Res(v) = %5.2e" %
               (Res_p, Res_u, Res_v))
         print(" ddt(p) = %5.2e, ddt(u) = %5.2e, ddt(v) = %5.2e" %
-              (np.linalg.norm((p-pn)/dt0),
-               np.linalg.norm((u-un)/dt0),
-               np.linalg.norm((v-vn)/dt0)))
+              (np.linalg.norm((p-pn)/dt),
+               np.linalg.norm((u-un)/dt),
+               np.linalg.norm((v-vn)/dt)))
 
         tOut += dtOut
 
     if (t-tPlot) > -1e-6:
 
         # Plot
-        if inlineGraphics:
-            [fig, ax1, ax2] = animateContoursAndVelocityVectors(
-                plotDivergence, plotLevels1, plotLevels2, plotEveryMthVector,
-                figureSize)
-        else:
-            [fig, ax1, ax2] = animateContoursAndVelocityVectors(
-                plotDivergence, plotLevels1, plotLevels2, plotEveryMthVector,
-                figureSize, fig, ax1, ax2)
-            fig.canvas.draw()
-            fig.canvas.flush_events()
+        [fig, ax] = animateContoursAndVelocityVectors(
+            inlineGraphics, plotContourVar, plotFaceValues, plotLevels,
+            plotVelocityVectorsEvery, figureSize, fig, ax)
+        fig.canvas.draw()
+        fig.canvas.flush_events()
 
         if saveFiguresToFile:
-            formattedFilename = '{0}_{1:5.3f}.png'.format(outputFilename, t)
+            formattedFilename = '{0}_{1:5.3f}.png'.format(figureFilename, t)
             path = Path('out') / formattedFilename
-            fig.savefig(path)
+            fig.savefig(path, dpi=144)
+
+        if writeProfile:
+            if profileDirection == 0:
+                dataIndices = Xf == profilePoint[1]
+            else:
+                dataIndices = Yf == profilePoint[0]
+            prof = np.stack((Xf[dataIndices], Yf[dataIndices],
+                             pcorn[dataIndices], ucorn[dataIndices],
+                             vcorn[dataIndices]), axis=-1)
+            np.savetxt('out/' + profileFilename + '.xy', prof,
+                       fmt='%.9f', delimiter="\t")
 
         tPlot += dtPlot

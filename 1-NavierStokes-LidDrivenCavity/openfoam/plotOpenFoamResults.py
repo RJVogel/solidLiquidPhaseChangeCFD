@@ -12,16 +12,19 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # Configuration
 saveFiguresToFile = True
-outputFilename = 'openFoam_liddrivencavity_Re20'
-t = 1
+outputFilename = 'openfoam_liddrivencavity_Re20'
+t = 5
 plt.close('all')
-figureSize = (6, 6)
-plotLevels1 = (-5, 5)
-plotLevels2 = (-1, 1)
+figureSize = (7, 6)
+plotLevels1 = (-1, 1)
+plotLevels2 = (-0.1, 0.1)
 colormap1 = 'bwr'
 colormap2 = 'seismic'
 plotEveryMthVector = 1
 plotDivergence = False
+
+# grid is the central object in VTK where every field is added on to grid
+grid = pv.UnstructuredGrid('OpenFOAM/cavity_Re20/VTK/cavity_Re20_100.vtk')
 
 
 def avg(array, axis):
@@ -36,9 +39,6 @@ def avg(array, axis):
     else:
         return np.nan
 
-
-# grid is the central object in VTK where every field is added on to grid
-grid = pv.UnstructuredGrid('liddrivencavity_1000.vtk')
 
 # grid points
 points = grid.points
@@ -90,7 +90,7 @@ divU = np.diff(avg(uf, 0), axis=1)/np.diff(Xf[1:, :], axis=1) + \
 # Plot
 
 # Figure
-fig = plt.figure(figsize=figureSize, dpi=100)
+fig = plt.figure(figsize=figureSize, dpi=72)
 
 # Levels
 if plotLevels1 == (None, None):
@@ -101,10 +101,14 @@ if plotLevels2 == (None, None):
 plotContourLevels1 = np.linspace(plotLevels1[0], plotLevels1[1], num=40)
 plotContourLevels2 = np.linspace(plotLevels2[0], plotLevels2[1], num=40)
 
-m = plotEveryMthVector
+font = {'family': 'DejaVu Sans',
+        'weight': 'normal',
+        'size': 12}
+plt.rc('font', **font)
 
-# Create figure
-fig = plt.figure(figsize=figureSize, dpi=100)
+m = plotEveryMthVector
+m0 = int(np.ceil(m/2)-1)
+
 # Create axis 1
 # Axis
 if plotDivergence:
@@ -114,7 +118,7 @@ else:
 ax1.set_aspect(1)
 ax1.set_xlabel('x')
 ax1.set_ylabel('y')
-ax1.set_title('OpenFOAM: Pressure contours and velocity vectors')
+# ax1.set_title('OpenFOAM: Pressure contours and velocity vectors')
 
 # Contours of pressure
 ctf1 = ax1.contourf(Xf, Yf, pf, plotContourLevels1,
@@ -128,8 +132,8 @@ cBar1 = fig.colorbar(ctf1, cax=cax1, extendrect=True, ticks=ticks1)
 cBar1.set_label('p / Pa')
 
 # plot velocity vectors
-ax1.quiver(X[::m, ::m], Y[::m, ::m],
-           uc[::m, ::m]+1e-12, vc[::m, ::m]+1e-12)
+ax1.quiver(X[m0::m, m0::m], Y[m0::m, m0::m],
+           uc[m0::m, m0::m]+1e-12, vc[m0::m, m0::m]+1e-12)
 
 if plotDivergence:
     # Create axis 2
@@ -152,10 +156,10 @@ if plotDivergence:
     cBar2 = fig.colorbar(ctf2, cax=cax2, extendrect=True, ticks=ticks2)
     cBar2.set_label('div (U) / 1/s')
 
+plt.tight_layout()
+plt.show()
+
 if saveFiguresToFile:
     formattedFilename = '{0}_{1:5.3f}.png'.format(outputFilename, t)
     path = formattedFilename
-    fig.savefig(path)
-
-plt.tight_layout()
-plt.show()
+    fig.savefig(path, dpi=144)
