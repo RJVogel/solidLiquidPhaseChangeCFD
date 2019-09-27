@@ -33,12 +33,12 @@ ymin = 0.
 ymax = 1.0
 
 # Spatial discretization
-dx = 0.05
-dy = 0.05
+dx = 0.01
+dy = 0.01
 
 # Temporal discretization
 tMax = 5.
-dt = 0.05
+dt = 0.01
 
 
 # Momentum equations -----------------------------------------------------------
@@ -65,11 +65,10 @@ vWall = [[0., 0.],
 pWall = [[NAN, NAN],
          [NAN, NAN]]
 
-# Solver: Use AMG preconditioner and BICGSTAB solver? Otherwise direct solver
-# Viscous laplace term in momentum equation
-precond_viscous = True
-# Poisson equation for pressure
-precond_pressure = True
+# Solver: amg, amg_precond_bicgstab, direct
+solver = 'amg_precond_bicgstab'
+tol_p = 1e-6
+tol_U = 1e-6
 
 
 # Visualization ----------------------------------------------------------------
@@ -91,8 +90,8 @@ inlineGraphics = True
 # Plot definition
 plotContourVar = 'p'  # 'p', u, v, 'U', 'divU'
 plotFaceValues = True
-plotVelocityVectorsEvery = 1
-plotLevels = (-2, 2)
+plotVelocityVectorsEvery = 5
+plotLevels = (-1, 1)
 colormap = 'bwr'
 
 # Save to file
@@ -174,7 +173,7 @@ def animateContoursAndVelocityVectors(inlineGraphics, plotContourVar,
 
     # Plot levels
     if plotLevels == (None, None):
-        plotLevels = (np.min(var)-1e-12, np.max(var)+1e-12)
+        plotLevels = (np.min(var), np.max(var))
 
     # Plot contours/pcolor
     plotContourLevels = np.linspace(plotLevels[0], plotLevels[1], num=40)
@@ -190,8 +189,8 @@ def animateContoursAndVelocityVectors(inlineGraphics, plotContourVar,
         m = plotVelocityVectorsEvery
         m0 = int(np.ceil(m/2)-1)
         ax1.quiver(X[1:-1, 1:-1][m0::m, m0::m], Y[1:-1, 1:-1][m0::m, m0::m],
-                   uc[1:-1, :][m0::m, m0::m]+1e-12,
-                   vc[:, 1:-1][m0::m, m0::m]+1e-12)
+                   uc[1:-1, :][m0::m, m0::m],
+                   vc[:, 1:-1][m0::m, m0::m])
 
     if fig is None or inlineGraphics:
         # Colorbar
@@ -276,113 +275,107 @@ def buildSecondDerivative1d(n, direction, wallBC, dirichletBetweenNodes):
                        [0, 1, -1], (n), (n))
 
 
-def solveMomentumNonLinearTerms(u, v, un, vn, dt, dx, dy):
+def solveMomentumNonLinearTerms(us, vs, un, vn, uc, vc, ucorn, vcorn,
+                                dt, dx, dy):
 
-    # Interpolated values
-    uah = avg(un, 1)  # horizontal average lives in cell centers
-    uav = avg(un, 0)  # vertical average lives in cell corners
-    vah = avg(vn, 1)  # horizontal average lives in cell corners
-    vav = avg(vn, 0)  # vertical average lives in cell centers
-    # u-velocity
-    u[1:-1, 1:-1] = un[1:-1, 1:-1] - dt*(
-        1/(dx)*(uah[1:-1, 1:]*uah[1:-1, 1:] -
-                uah[1:-1, :-1]*uah[1:-1, :-1]) +
-        1/(dy)*(vah[1:, 1:-1]*uav[1:, 1:-1] -
-                vah[:-1, 1:-1]*uav[:-1, 1:-1]))
-    # v-velocity
-    v[1:-1, 1:-1] = vn[1:-1, 1:-1] - dt*(
-        1/(dx)*(uav[1:-1, 1:]*vah[1:-1, 1:] -
-                uav[1:-1, :-1]*vah[1:-1, :-1]) +
-        1/(dy)*(vav[1:, 1:-1]*vav[1:, 1:-1] -
-                vav[:-1, 1:-1]*vav[:-1, 1:-1]))
+    # u*-velocity
+    us[1:-1, 1:-1] = un[1:-1, 1:-1] - dt*(
+        1/(dx)*(uc[1:-1, 1:]*uc[1:-1, 1:] -
+                uc[1:-1, :-1]*uc[1:-1, :-1]) +
+        1/(dy)*(vcorn[1:, 1:-1]*ucorn[1:, 1:-1] -
+                vcorn[:-1, 1:-1]*ucorn[:-1, 1:-1]))
+    # v*-velocity
+    vs[1:-1, 1:-1] = vn[1:-1, 1:-1] - dt*(
+        1/(dx)*(ucorn[1:-1, 1:]*vcorn[1:-1, 1:] -
+                ucorn[1:-1, :-1]*vcorn[1:-1, :-1]) +
+        1/(dy)*(vc[1:, 1:-1]*vc[1:, 1:-1] -
+                vc[:-1, 1:-1]*vc[:-1, 1:-1]))
 
-    return u, v
+    return us, vs
 
 
-def solveMomentumViscousTerms(u, v, dt, dx, dy, nu, A_u, A_v, rhs_u, rhs_v,
-                              rhs_u_bound, rhs_v_bound, amg_pre, M_u, M_v):
+def solveMomentumViscousTerms(us, vs, dt, dx, dy, nu, A_u, A_v, rhs_u, rhs_v,
+                              rhs_u_bound, rhs_v_bound, solver, tol, ml_u, ml_v,
+                              M_u, M_v):
 
     # Right hand sides
-    rhs_u[:, :] = u[1:-1, 1:-1] + rhs_u_bound[:, :]
-    rhs_v[:, :] = v[1:-1, 1:-1] + rhs_v_bound[:, :]
+    rhs_u[:, :] = us[1:-1, 1:-1] + rhs_u_bound[:, :]
+    rhs_v[:, :] = vs[1:-1, 1:-1] + rhs_v_bound[:, :]
 
     # Solve linear systems
-    if amg_pre:
-        [u[1:-1, 1:-1].flat[:], info] = spla.bicgstab(
-            A_u, rhs_u.ravel(), x0=u[1:-1, 1:-1].ravel(),
-            tol=1e-6, maxiter=100, M=M_u)
-        [v[1:-1, 1:-1].flat[:], info] = spla.bicgstab(
-            A_v, rhs_v.ravel(), x0=v[1:-1, 1:-1].ravel(),
-            tol=1e-6, maxiter=100, M=M_v)
+    if solver == 'amg_precond_bicgstab':
+        [us[1:-1, 1:-1].flat[:], info] = spla.bicgstab(
+            A_u, rhs_u.ravel(), x0=u[1:-1, 1:-1].ravel(), tol=tol, M=M_u)
+        [vs[1:-1, 1:-1].flat[:], info] = spla.bicgstab(
+            A_v, rhs_v.ravel(), x0=v[1:-1, 1:-1].ravel(), tol=tol, M=M_v)
+    elif solver == 'amg':
+        us[1:-1, 1:-1].flat[:] = ml_u.solve(rhs_u.ravel(), tol=tol)
+        vs[1:-1, 1:-1].flat[:] = ml_v.solve(rhs_v.ravel(), tol=tol)
     else:
-        u[1:-1, 1:-1].flat[:] = spla.spsolve(A_u, rhs_u.ravel())
-        v[1:-1, 1:-1].flat[:] = spla.spsolve(A_v, rhs_v.ravel())
+        us[1:-1, 1:-1].flat[:] = spla.spsolve(A_u, rhs_u.ravel())
+        vs[1:-1, 1:-1].flat[:] = spla.spsolve(A_v, rhs_v.ravel())
 
-#    # u-velocity
-#    u[1:-1, 1:-1] = u[1:-1, 1:-1] + dt*(
-#        nu * (1/dx**2*(u[1:-1, 2:]-2*u[1:-1, 1:-1]+u[1:-1, :-2]) +
-#              1/dy**2*(u[2:, 1:-1]-2*u[1:-1, 1:-1]+u[:-2, 1:-1])))
-#    # v-velocity
-#    v[1:-1, 1:-1] = v[1:-1, 1:-1] + dt*(
-#        nu * (1/dx**2*(v[1:-1, 2:]-2*v[1:-1, 1:-1]+v[1:-1, :-2]) +
-#              1/dy**2*(v[2:, 1:-1]-2*v[1:-1, 1:-1]+v[:-2, 1:-1])))
-
-    return u, v, rhs_u, rhs_v
+    return us, vs, rhs_u, rhs_v
 
 
-def correctPressure(u, v, p, A, rhs, rhs_bound, rho, dt, dx, dy, amg_pre, M):
+def correctPressure(us, vs, p, A, rhs, rhs_bound, rho, dt, dx, dy,
+                    solver, tol, ml, M):
 
     # Poisson equation
     # Right hand side
-    rhs[:, :] = -rho/dt*(np.diff(u[1:-1, :], axis=1)/dx +
-                         np.diff(v[:, 1:-1], axis=0)/dy) + rhs_bound[:, :]
+    rhs[:, :] = -rho/dt*(np.diff(us[1:-1, :], axis=1)/dx +
+                         np.diff(vs[:, 1:-1], axis=0)/dy) + rhs_bound[:, :]
     # Solve linear system
-    if amg_pre:
+    if solver == 'amg_precond_bicgstab':
         [p[1:-1, 1:-1].flat[:], info] = spla.bicgstab(
-            A, rhs.ravel(), x0=p[1:-1, 1:-1].ravel(),
-            tol=1e-9, maxiter=100, M=M)
+            A, rhs.ravel(), x0=p[1:-1, 1:-1].ravel(), tol=tol, M=M)
+    elif solver == 'amg':
+        p[1:-1, 1:-1].flat[:] = ml.solve(rhs.ravel(), tol=tol)
     else:
         p[1:-1, 1:-1].flat[:] = spla.spsolve(A, rhs.ravel())
 
     # Project corrected pressure onto velocity field
-    u[1:-1, 1:-1] = u[1:-1, 1:-1] - dt/rho * \
+    u[1:-1, 1:-1] = us[1:-1, 1:-1] - dt/rho * \
         (p[1:-1, 2:-1]-p[1:-1, 1:-2])/(dx)
-    v[1:-1, 1:-1] = v[1:-1, 1:-1] - dt/rho * \
+    v[1:-1, 1:-1] = vs[1:-1, 1:-1] - dt/rho * \
         (p[2:-1, 1:-1]-p[1:-2, 1:-1])/(dy)
 
     return u, v, p, rhs
 
 
-def setBoundaryConditions(u, v, p, uWall, vWall, pWall):
-
-    # Velocities
+def interpolateVelocities(u, v, uWall, vWall):
 
     # West
-    u[:, 0] = uWall[1][0]
     if np.isnan(vWall[1][0]):
         v[:, 0] = v[:, 1]  # symmetry
     else:
         v[:, 0] = 2*vWall[1][0] - v[:, 1]  # wall
     # East
-    u[:, -1] = uWall[1][1]
     if np.isnan(vWall[1][1]):
         v[:, -1] = v[:, -2]  # symmetry
     else:
         v[:, -1] = 2*vWall[1][1] - v[:, -2]  # wall
     # South
-    v[0, :] = vWall[0][0]
     if np.isnan(uWall[0][0]):
         u[0, :] = u[1, :]  # symmetry
     else:
         u[0, :] = 2*uWall[0][0] - u[1, :]  # wall
     # North
-    v[-1, :] = vWall[0][1]
     if np.isnan(uWall[0][1]):
         u[-1, :] = u[-2, :]  # symmetry
     else:
         u[-1, :] = 2*uWall[0][1] - u[-2, :]  # wall
 
-    # Pressure
+    # Interpolated values
+    uc = avg(u, 1)  # horizontal average lives in cell centers
+    vc = avg(v, 0)  # vertical average lives in cell centers
+    ucorn = avg(u, 0)  # vertical average lives in cell corners
+    vcorn = avg(v, 1)  # horizontal average lives in cell corners
+
+    return u, v, uc, vc, ucorn, vcorn
+
+
+def interpolatePressure(p, pWall):
 
     # West
     if np.isnan(pWall[1][0]):
@@ -404,25 +397,22 @@ def setBoundaryConditions(u, v, p, uWall, vWall, pWall):
         p[-1, 1:-1] = p[-2, 1:-1]
     else:
         p[-1, 1:-1] = 2*pWall[0][1] - p[-2, 1:-1]
-    # Corners interpolated with mean of x- and y- 2nd order backward stencil
+    # Boundary corners interpolated with mean of x- and y- 2nd order backward
     p[0, 0] = (2*p[0, 1] - p[0, 2] + 2*p[1, 0] - p[2, 0]) / 2  # SW
     p[0, -1] = (2*p[0, -2] - p[0, -3] + 2*p[1, -1] - p[2, -1]) / 2  # SE
     p[-1, 0] = (2*p[-1, 1] - p[-1, 2] + 2*p[-2, 0] - p[-3, 0]) / 2  # NW
     p[-1, -1] = (2*p[-1, -2] - p[-1, -3] + 2*p[-2, -1] - p[-3, -1]) / 2  # NE
 
-    return u, v, p
+    # Pressure in corners
+    pcorn = avg(avg(p, 0), 1)
+
+    return p, pcorn
 
 
 def calcDerived(Xf, Yf, p, u, v, dx, dy, nu, dt):
 
-    # Pressure at cell corners
-    pcorn = avg(avg(p, 0), 1)
-    # Velocities
-    uc = avg(u, 1)
-    vc = avg(v, 0)
+    # Velocity magnitudes
     Uc = (uc[1:-1, :]**2+vc[:, 1:-1]**2)**0.5
-    ucorn = avg(u, 0)
-    vcorn = avg(v, 1)
     Ucorn = (ucorn**2+vcorn**2)**0.5
     uMax = np.max(np.abs(ucorn))
     vMax = np.max(np.abs(vcorn))
@@ -439,13 +429,12 @@ def calcDerived(Xf, Yf, p, u, v, dx, dy, nu, dt):
     Vis_x = dt*(2*nu)/dx**2
     Vis_y = dt*(2*nu)/dy**2
 
-    return pcorn, uc, vc, ucorn, vcorn, Uc, Ucorn, uMax, vMax, divU, \
-        Pe_u, Pe_v, CFL_u, CFL_v, Vis_x, Vis_y
+    return Uc, Ucorn, uMax, vMax, divU, Pe_u, Pe_v, CFL_u, CFL_v, Vis_x, Vis_y
 
 
 # PREPROCESSING ================================================================
 
-# Mesh generation
+# Mesh generation---------------------------------------------------------------
 
 # Number of inner points
 nx = int((xmax-xmin)/dx)
@@ -458,13 +447,27 @@ X, Y = np.meshgrid(x, y)
 xf = np.linspace(xmin, xmax, nx+1)
 yf = np.linspace(ymin, ymax, ny+1)
 Xf, Yf = np.meshgrid(xf, yf)
+# Print
+print("Mesh generated with %d x %d = %d internal centered nodes" %
+      (nx, ny, nx*ny))
 
-# Initial values
+# Initial values----------------------------------------------------------------
 
 # Variables
 p = np.zeros((ny+2, nx+2))
 u = np.zeros((ny+2, nx+1))
 v = np.zeros((ny+1, nx+2))
+# Constant boundaries
+# West
+u[:, 0] = uWall[1][0]
+# East
+u[:, -1] = uWall[1][1]
+# South
+v[0, :] = vWall[0][0]
+# North
+v[-1, :] = vWall[0][1]
+# Interpolate velocity internal and boundary values for non-linear terms
+[u, v, uc, vc, ucorn, vcorn] = interpolateVelocities(u, v, uWall, vWall)
 # Right hand sides
 rhs_p = np.zeros((ny, nx))
 rhs_u = np.zeros((ny, nx-1))
@@ -474,7 +477,7 @@ rhs_p_bound = np.zeros((ny, nx))
 rhs_u_bound = np.zeros((ny, nx-1))
 rhs_v_bound = np.zeros((ny-1, nx))
 
-# Generate system matrices
+# Generate system matrices------------------------------------------------------
 
 # Poisson equation for pressure
 [A_p, rhs_p_bound] = buildPoissonEquation(nx, ny, dx, dy,
@@ -498,68 +501,61 @@ A_v = sps.eye(nx*(ny-1)) + dt*nu*A_v
 rhs_v_bound = dt*nu*rhs_v_bound
 
 # Algebraic Multigrid (AMG) as preconditioner
-if precond_pressure or precond_viscous:
+if solver in ['amg', 'amg_precond_bicgstab']:
     import pyamg
-if precond_pressure:
-    ml = pyamg.smoothed_aggregation_solver(A_p, max_coarse=10)
-    M_p = ml.aspreconditioner(cycle='V')
-if precond_viscous:
-    ml = pyamg.smoothed_aggregation_solver(A_u, max_coarse=10)
-    M_u = ml.aspreconditioner(cycle='V')
-    ml = pyamg.smoothed_aggregation_solver(A_v, max_coarse=10)
-    M_v = ml.aspreconditioner(cycle='V')
-
-# Calculate derived quantities
-[pcorn, uc, vc, ucorn, vcorn, Uc, Ucorn, uMax, vMax, divU,
- Pe_u, Pe_v, CFL_u, CFL_v, Vis_x, Vis_y] = calcDerived(
-     Xf, Yf, p, u, v, dx, dy, nu, dt)
-
-# Plot
-[fig, ax] = animateContoursAndVelocityVectors(
-    inlineGraphics, plotContourVar, plotFaceValues, plotLevels,
-    plotVelocityVectorsEvery, figureSize)
-
+if solver in ['amg', 'amg_precond_bicgstab']:
+    ml_p = pyamg.smoothed_aggregation_solver(A_p, max_coarse=10)
+    ml_u = pyamg.smoothed_aggregation_solver(A_u, max_coarse=10)
+    ml_v = pyamg.smoothed_aggregation_solver(A_v, max_coarse=10)
+if solver == 'amg_precond_bicgstab':
+    M_p = ml_p.aspreconditioner(cycle='V')
+    M_u = ml_u.aspreconditioner(cycle='V')
+    M_v = ml_v.aspreconditioner(cycle='V')
 
 # Time stepping ================================================================
 
 twall0 = time.time()
 tOut = dtOut
 tPlot = dtPlot
-t = 0
-n = 0
+fig, ax = None, None
+t, n = 0, 0
 
 while t < tMax:
 
     n += 1
-
-    dt = dt
     t += dt
 
     # Update variables
-    pn = p.copy()
-    un = u.copy()
-    vn = v.copy()
+    pn, un, vn, us, vs = p.copy(), u.copy(), v.copy(), u.copy(), v.copy()
 
-    # Projection method
+    # Projection method: Intermediate velocity field u*
+    [us, vs] = solveMomentumNonLinearTerms(us, vs, un, vn, uc, vc, ucorn, vcorn,
+                                           dt, dx, dy)
+    [us, vs, rhs_u, rhs_v] = solveMomentumViscousTerms(
+        us, vs, dt, dx, dy, nu, A_u, A_v, rhs_u, rhs_v,
+        rhs_u_bound, rhs_v_bound, solver, tol_U, ml_u, ml_v, M_u, M_v)
 
-    # Intermediate velocity field u*
-    [u, v] = solveMomentumNonLinearTerms(u, v, un, vn, dt, dx, dy)
-    [u, v, rhs_u, rhs_v] = solveMomentumViscousTerms(
-        u, v, dt, dx, dy, nu, A_u, A_v, rhs_u, rhs_v,
-        rhs_u_bound, rhs_v_bound, precond_viscous, M_u, M_v)
-    Res_u = np.linalg.norm(rhs_u.ravel()-A_u*u[1:-1, 1:-1].ravel())
-    Res_v = np.linalg.norm(rhs_v.ravel()-A_v*v[1:-1, 1:-1].ravel())
-    # Pressure correction
-    [u, v, p, rhs_p] = correctPressure(u, v, p, A_p, rhs_p, rhs_p_bound,
-                                       rho, dt, dx, dy, precond_pressure, M_p)
-    Res_p = np.linalg.norm(rhs_p.ravel()-A_p*p[1:-1, 1:-1].ravel())
-    # Update boundary values
-    [u, v, p] = setBoundaryConditions(u, v, p, uWall, vWall, pWall)
+    # Projection method: Pressure correction
+    [u, v, p, rhs_p] = correctPressure(us, vs, p, A_p, rhs_p, rhs_p_bound, rho,
+                                       dt, dx, dy, solver, tol_p, ml_p, M_p)
+
+    # Interpolate velocity internal and boundary values for non-linear terms
+    [u, v, uc, vc, ucorn, vcorn] = interpolateVelocities(u, v, uWall, vWall)
+
+    # Print output step --------------------------------------------------------
 
     if (t-tOut) > -1e-6:
 
+        # Calculate residuals
+        Res_u = np.linalg.norm(rhs_u.ravel()-A_u*us[1:-1, 1:-1].ravel()) / \
+            np.linalg.norm(rhs_u.ravel())
+        Res_v = np.linalg.norm(rhs_v.ravel()-A_v*vs[1:-1, 1:-1].ravel()) / \
+            np.linalg.norm(rhs_v.ravel())
+        Res_p = np.linalg.norm(rhs_p.ravel()-A_p*p[1:-1, 1:-1].ravel()) / \
+            np.linalg.norm(rhs_p.ravel())
+
         # Calculate derived quantities
-        [pcorn, uc, vc, ucorn, vcorn, Uc, Ucorn, uMax, vMax, divU,
+        [Uc, Ucorn, uMax, vMax, divU,
          Pe_u, Pe_v, CFL_u, CFL_v, Vis_x, Vis_y] = calcDerived(
              Xf, Yf, p, u, v, dx, dy, nu, dt)
 
@@ -579,7 +575,12 @@ while t < tMax:
 
         tOut += dtOut
 
+    # Plot and save graphs and profiles ----------------------------------------
+
     if (t-tPlot) > -1e-6:
+
+        # Interpolate pressure on corners and boundaries for plotting
+        [p, pcorn] = interpolatePressure(p, pWall)
 
         # Plot
         [fig, ax] = animateContoursAndVelocityVectors(

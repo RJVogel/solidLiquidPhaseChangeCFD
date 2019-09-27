@@ -17,7 +17,7 @@ The Python code is found in [1-NS-LDC.py](https://github.com/RJVogel/solidLiquid
     <caption> Pressure contours and velocity vectors of the lid-driven cavity with Re = 20 at steady state after time t = 5 s.
     </caption>
     <tr>
-        <td><img src="/1-NavierStokes-LidDrivenCavity/out/liddrivencavity_Re20_5.000.png" width="500"/></td>
+        <td><img src="/1-NavierStokes-LidDrivenCavity/plots/liddrivencavity_Re20_5.000.png" width="500"/></td>
     </tr>
 </table>
 
