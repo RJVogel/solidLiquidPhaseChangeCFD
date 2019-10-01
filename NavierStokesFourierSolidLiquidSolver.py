@@ -28,20 +28,20 @@ NAN = np.nan
 
 # Geometry
 xmin = 0.
-xmax = 1.
+xmax = 0.02
 ymin = 0.
-ymax = 1.
+ymax = 0.02
 
 # Spatial discretization
-dx = 0.05
-dy = 0.05
+dx = 0.0005
+dy = 0.0005
 
 # Temporal discretization
-tMax = 50.
-dt = 0.01
+tMax = 1
+dt = 0.00025
 
 # Upwind discretization
-gamma = 0
+gamma = 1
 
 
 # Momentum equations -----------------------------------------------------------
@@ -59,11 +59,11 @@ v0 = 0
 # Wall x-velocity: [[S, N]
 #                   [W, E]], NAN = symmetry
 uWall = [[0., 0.],
-         [0., 0]]
+         [0., 0.]]
 # Wall y-velocity: [[S, N]
 #                   [W, E]], NAN = symmetry
 vWall = [[0., 0.],
-         [0., 0.]]
+         [1., 0.]]
 # Wall pressure: [[S, N]
 #                 [W, E]], NAN = symmetry
 pWall = [[NAN, NAN],
@@ -72,9 +72,9 @@ pWall = [[NAN, NAN],
 # Material properties
 
 # Density
-rho = 1
+rho = 820.733
 # Kinematic viscosity
-mu = 0.001
+mu = 0.003543
 
 # Solver: amg, amg_precond_bicgstab, direct
 solver = 'amg_precond_bicgstab'
@@ -84,31 +84,57 @@ tol_U = 1e-6
 
 # Energy equation --------------------------------------------------------------
 
-# Solver energy equation?
-solveEnergy = True
+# Solve energy equation?
+solveEnergy = False
 
 # Initial conditions
-T0 = 500
+T0 = 27
 
 # Boundary conditions
 # Wall temperature: [[S, N]
 #                   [W, E]], NAN = symmetry
 Twall = [[NAN, NAN],
-         [1000, 0]]
+         [38, 28]]
 
 # Material properties
 
 # Specific heat capacity
-c = 1000
+c = 2078.04
 # Thermal conductivity
-k = 1.
+k = 0.151215
 # Thermal expansion coefficient
-beta = 1e-3
+beta = 8.9e-4
 # Reference temperature for linearized buoyancy term (Boussinesq)
-Tref = T0
+Tref = 28.
 
 # Physical constants
-g = 10.
+g = 9.81
+
+
+# Solid-liquid phase change ----------------------------------------------------
+
+# Solve phase change?
+solvePhaseChange = False
+
+# Boundary conditions
+# Wall liquid fraction: [[S, N]
+#                        [W, E]], NAN = symmetry
+fWall = [[NAN, NAN],
+         [1, NAN]]
+
+# Material properties
+
+# Melting temperature
+Tm = 28.
+# Latent heat
+L = 242454.
+
+# Model parameters
+
+# Mushy region temperature range
+dTm = 0.2
+# Mushy region constant
+Cmush = 1e9
 
 
 # Visualization ----------------------------------------------------------------
@@ -128,8 +154,8 @@ figureSize = (7, 6)
 inlineGraphics = True
 
 # Plot definition
-plotContourVar = 'T'  # 'p', u, v, 'U', 'divU', 'T'
-plotFaceValues = True
+plotContourVar = 'p'  # 'p', u, v, 'U', 'divU', 'T'
+plotFaceValues = False
 plotVelocityVectorsEvery = 1
 plotLevels = (None, None)
 colormap = 'bwr'
@@ -216,6 +242,12 @@ def animateContoursAndVelocityVectors(inlineGraphics, plotContourVar,
         else:
             var = T[1:-1, 1:-1]
         label = 'T / °C'
+    elif plotContourVar == 'f':
+        if plotFaceValues:
+            var = fcorn
+        else:
+            var = f[1:-1, 1:-1]
+        label = 'f'
 
     # Plot levels
     if plotLevels == (None, None):
@@ -325,7 +357,8 @@ def buildSecondDerivative1d(n, direction, wallBC, dirichletBetweenNodes):
 def solveMomentumEquation(
         us, vs, un, vn, uc, vc, ucorn, vcorn, T, Tref, dt, dx, dy,
         nu, beta, g, A_u, A_v, rhs_u, rhs_v, rhs_u_bound, rhs_v_bound,
-        solver, tol, ml_u, ml_v, M_u, M_v, solveEnergy, gamma):
+        solver, tol, ml_u, ml_v, M_u, M_v, solveEnergy, gamma,
+        solvePhaseChange, Bu, Bv):
 
     udh = np.diff(us, axis=1)/2
     udv = np.diff(us, axis=0)/2
@@ -342,6 +375,13 @@ def solveMomentumEquation(
         1/(dy)*np.diff(vc[:, 1:-1]*vc[:, 1:-1] -
                        gamma*np.abs(vc[:, 1:-1])*vdv[:, 1:-1], axis=0)
 
+    if solvePhaseChange:
+        # Velocity switch off
+        A_u = A_u + sps.spdiags(
+            dt*Bu[1:-1, 1:-1].ravel(), 0, ny*(nx-1), ny*(nx-1))
+        A_v = A_v + sps.spdiags(
+            dt*Bv[1:-1, 1:-1].ravel(), 0, (ny-1)*nx, (ny-1)*nx)
+
     # Right hand side
     rhs_u[:, :] = un[1:-1, 1:-1] - dt*Fu
     rhs_v[:, :] = vn[1:-1, 1:-1] - dt*Fv
@@ -349,6 +389,10 @@ def solveMomentumEquation(
     # Boundary conditions
     rhs_u = rhs_u + rhs_u_bound
     rhs_v = rhs_v + rhs_v_bound
+
+#    if solvePhaseChange:
+#        rhs_u[:, :] = rhs_u[:, :] + un[1:-1, 1:-1]*dt*Bu[1:-1, 1:-1]
+#        rhs_v[:, :] = rhs_v[:, :] + vn[1:-1, 1:-1]*dt*Bv[1:-1, 1:-1]
 
     if solveEnergy:
         # Interpolate temperature on staggered y face positions
@@ -373,7 +417,8 @@ def solveMomentumEquation(
 
 
 def correctPressure(us, vs, p, T, A, rhs_p, rhs_p_bound, rho, g, beta,
-                    dt, dx, dy, solver, tol, ml, M, solveEnergy):
+                    dt, dx, dy, solver, tol, ml, M, solveEnergy,
+                    solvePhaseChange, Bu, Bv):
 
     # Poisson equation
     # Right hand side
@@ -392,16 +437,24 @@ def correctPressure(us, vs, p, T, A, rhs_p, rhs_p_bound, rho, g, beta,
     else:
         p[1:-1, 1:-1].flat[:] = spla.spsolve(A, rhs_p.ravel())
 
+    # Pressure gradients
+    dpdx = - dt/rho * (p[1:-1, 2:-1]-p[1:-1, 1:-2])/(dx)
+    dpdy = - dt/rho * (p[2:-1, 1:-1]-p[1:-2, 1:-1])/(dy)
+
+#    if solvePhaseChange:
+#        # Correct for velocity switch-off
+#        dpdx = dpdx/(1+dt*Bu[1:-1, 1:-1])
+#        dpdy = dpdy/(1+dt*Bv[1:-1, 1:-1])
+
     # Project corrected pressure onto velocity field
-    u[1:-1, 1:-1] = us[1:-1, 1:-1] - dt/rho * \
-        (p[1:-1, 2:-1]-p[1:-1, 1:-2])/(dx)
-    v[1:-1, 1:-1] = vs[1:-1, 1:-1] - dt/rho * \
-        (p[2:-1, 1:-1]-p[1:-2, 1:-1])/(dy)
+    u[1:-1, 1:-1] = us[1:-1, 1:-1] + dpdx
+    v[1:-1, 1:-1] = vs[1:-1, 1:-1] + dpdy
 
     return u, v, p, rhs_p
 
 
-def solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, gamma):
+def solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, gamma,
+                        solvePhaseChange, cMod):
 
     # Interpolate temperature on staggered x and y face positions
     Tfx = avg(T, 1)
@@ -412,15 +465,43 @@ def solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, gamma):
     uT = u[1:-1, :]*Tfx[1:-1, :] - gamma*np.abs(u[1:-1, :])*Tdx[1:-1, :]
     vT = v[:, 1:-1]*Tfy[:, 1:-1] - gamma*np.abs(v[:, 1:-1])*Tdy[:, 1:-1]
 
+    dT = - dt*(1/dx*np.diff(uT, axis=1) + 1/dy*np.diff(vT, axis=0)) \
+        + dt*a*(1/dx**2*(Tn[1:-1, 2:]-2*Tn[1:-1, 1:-1]+Tn[1:-1, :-2]) +
+                1/dy**2*(Tn[2:, 1:-1]-2*Tn[1:-1, 1:-1]+Tn[:-2, 1:-1]))
+
+    if solvePhaseChange:
+        dT = dT/cMod[1:-1, 1:-1]
+
     # Solve energy equation
-    T[1:-1, 1:-1] = Tn[1:-1, 1:-1] - dt*(
-        1/dx*np.diff(uT, axis=1) +
-        1/dy*np.diff(vT, axis=0)) + \
-        dt*a*(
-            1/dx**2*(Tn[1:-1, 2:]-2*Tn[1:-1, 1:-1]+Tn[1:-1, :-2]) +
-            1/dy**2*(Tn[2:, 1:-1]-2*Tn[1:-1, 1:-1]+Tn[:-2, 1:-1]))
+    T[1:-1, 1:-1] = Tn[1:-1, 1:-1] + dT
 
     return T
+
+
+def calcEnthalpyPorosity(T, Tm, dTm, L, c, solveMomentum, Cmush, Bu, Bv):
+
+    # Calculate liquid phase fraction
+    f = (T-Tm)/dTm+0.5
+    f = np.minimum(f, 1)
+    f = np.maximum(f, 0)
+
+    # Find phase change cells
+    pc = np.logical_and(f > 0, f < 1)
+
+    # Set heat capacity modifier
+    cMod[pc] = 1+L/(c*dTm)
+    cMod[np.logical_not(pc)] = 1
+
+    if solveMomentum:
+        # Velocity switch-off constant
+        q = 1e-3
+        B = Cmush*(1-f)**2/(f**3+q)
+        Bu, Bv = avg(B, 1), avg(B, 0)
+    else:
+        Bu[:, :] = np.nan
+        Bv[:, :] = np.nan
+
+    return f, pc, cMod, Bu, Bv
 
 
 def interpolateVelocities(u, v, uWall, vWall):
@@ -557,6 +638,8 @@ a = k/(rho*c)
 # Dimensionless numbers
 Pr = nu/a
 Tb = np.array(Twall)[~np.isnan(Twall)]
+if solvePhaseChange:
+    Tb = np.append(Tb, Tm)
 RaLx = g*beta*(np.max(Tb)-np.min(Tb))*(xmax-xmin)**3/(nu*a)
 RaLy = g*beta*(np.max(Tb)-np.min(Tb))*(ymax-ymin)**3/(nu*a)
 # Constant boundaries
@@ -572,6 +655,13 @@ v[-1, :] = vWall[0][1]
 [u, v, uc, vc, ucorn, vcorn] = interpolateVelocities(u, v, uWall, vWall)
 # Interpolate temperature on boundaries for non-linear and source terms
 T = interpolateCellCenteredOnBoundary(T, Twall)
+# Liquid phase fraction
+f = (T > Tm).astype(float)
+# Modified heat capacity
+cMod = np.ones((ny+2, nx+2))
+# Velocity switch off terms
+Bu = np.zeros((ny+2, nx+1))
+Bv = np.zeros((ny+1, nx+2))
 # Right hand sides
 rhs_p = np.zeros((ny, nx))
 rhs_u = np.zeros((ny, nx-1))
@@ -632,6 +722,7 @@ while t - tMax < -1e-9:
     t += dt
 
     if solveMomentum:
+
         # Update variables
         pn = p.copy()
         un, vn, us, vs = u.copy(), v.copy(), u.copy(), v.copy()
@@ -640,23 +731,35 @@ while t - tMax < -1e-9:
         [us, vs, rhs_u, rhs_v] = solveMomentumEquation(
             us, vs, un, vn, uc, vc, ucorn, vcorn, T, Tref, dt, dx, dy,
             nu, beta, g, A_u, A_v, rhs_u, rhs_v, rhs_u_bound, rhs_v_bound,
-            solver, tol_U, ml_u, ml_v, M_u, M_v, solveEnergy, gamma)
+            solver, tol_U, ml_u, ml_v, M_u, M_v, solveEnergy, gamma,
+            solvePhaseChange, Bu, Bv)
 
         # Projection method: Pressure correction
         [u, v, p, rhs_p] = correctPressure(
             us, vs, p, T, A_p, rhs_p, rhs_p_bound,
-            rho, g, beta, dt, dx, dy, solver, tol_p, ml_p, M_p, solveEnergy)
+            rho, g, beta, dt, dx, dy, solver, tol_p, ml_p, M_p, solveEnergy,
+            solvePhaseChange, Bu, Bv)
 
         # Interpolate velocity on internal & boundary values f. non-linear terms
         [u, v, uc, vc, ucorn, vcorn] = interpolateVelocities(u, v, uWall, vWall)
 
     if solveEnergy:
+
         # Advance temperature
         Tn = T.copy()
+
         # Solve energy equation
-        T = solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, gamma)
+        T = solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, gamma,
+                                solvePhaseChange, cMod)
+
         # Interpolate temperature on boundaries for non-linear and source terms
         T = interpolateCellCenteredOnBoundary(T, Twall)
+
+        if solvePhaseChange:
+
+            # Enthalpy porosity method
+            [f, pc, cMod, Bu, Bv] = calcEnthalpyPorosity(
+                T, Tm, dTm, L, c, solveMomentum, Cmush, Bu, Bv)
 
     # Print output step --------------------------------------------------------
 
@@ -713,6 +816,10 @@ while t - tMax < -1e-9:
         if solveEnergy:
             # Interpolate temperature on corners for plotting
             [T, Tcorn] = interpolateCellCenteredOnCorners(T, Twall)
+
+        if solvePhaseChange:
+            # Interpolate temperature on corners for plotting
+            [f, fcorn] = interpolateCellCenteredOnCorners(f, fWall)
 
         # Plot
         [fig, ax] = animateContoursAndVelocityVectors(
