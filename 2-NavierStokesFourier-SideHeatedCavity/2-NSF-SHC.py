@@ -11,7 +11,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import time
-from drawnow import drawnow
 from pathlib import Path
 
 # Output
@@ -64,7 +63,7 @@ dt0 = 0.005
 nit = 50  # iterations of pressure poisson equation
 
 # Visualization
-dtOut = 0.1  # output step length
+dtOut = 1  # output step length
 nOut = int(round(tMax/dtOut))
 figureSize = (10, 6.25)
 minContour1 = 2
@@ -97,6 +96,8 @@ U = np.zeros((ny, nx))
 
 
 def animateContoursAndVelocityVectors():
+
+    fig = plt.figure(figsize=figureSize, dpi=100)
 
     # plot temperature and pressure
     # Axis
@@ -307,7 +308,6 @@ def solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, Twall):
 
 # Create figure
 plt.close('all')
-fig = plt.figure(figsize=figureSize, dpi=100)
 
 # Time stepping
 twall0 = time.time()
@@ -369,6 +369,6 @@ while t < tMax:
         print(" max|v| = %3.1e, CFL(v) = %3.1f, Pe(v) = %4.1f, RaH = %3.1e" %
               (vMax, CFL_v, Pe_v, RaH))
 
-        drawnow(animateContoursAndVelocityVectors)
+        animateContoursAndVelocityVectors()
 
         tOut += dtOut

@@ -28,27 +28,26 @@ NAN = np.nan
 
 # Geometry
 xmin = 0.
-xmax = 1.0
+xmax = 1.
 ymin = 0.
-ymax = 1.0
+ymax = 1.
 
 # Spatial discretization
 dx = 0.05
 dy = 0.05
 
 # Temporal discretization
-tMax = 1000.
-dt = 1
+tMax = 50.
+dt = 0.01
+
+# Upwind discretization
+gamma = 0
 
 
 # Momentum equations -----------------------------------------------------------
 
-# Material properties
-
-# Density
-rho = 1
-# Kinematic viscosity
-mu = 0.05
+# Solver momentum equations?
+solveMomentum = True
 
 # Initial conditions
 p0 = 0
@@ -60,7 +59,7 @@ v0 = 0
 # Wall x-velocity: [[S, N]
 #                   [W, E]], NAN = symmetry
 uWall = [[0., 0.],
-         [0., 0.]]
+         [0., 0]]
 # Wall y-velocity: [[S, N]
 #                   [W, E]], NAN = symmetry
 vWall = [[0., 0.],
@@ -69,6 +68,13 @@ vWall = [[0., 0.],
 #                 [W, E]], NAN = symmetry
 pWall = [[NAN, NAN],
          [NAN, NAN]]
+
+# Material properties
+
+# Density
+rho = 1
+# Kinematic viscosity
+mu = 0.001
 
 # Solver: amg, amg_precond_bicgstab, direct
 solver = 'amg_precond_bicgstab'
@@ -81,29 +87,28 @@ tol_U = 1e-6
 # Solver energy equation?
 solveEnergy = True
 
+# Initial conditions
+T0 = 500
+
+# Boundary conditions
+# Wall temperature: [[S, N]
+#                   [W, E]], NAN = symmetry
+Twall = [[NAN, NAN],
+         [1000, 0]]
+
 # Material properties
 
 # Specific heat capacity
 c = 1000
 # Thermal conductivity
-k = 0.01
+k = 1.
 # Thermal expansion coefficient
 beta = 1e-3
 # Reference temperature for linearized buoyancy term (Boussinesq)
-Tref = 0.
+Tref = T0
 
 # Physical constants
-g = 9.81
-
-# Initial conditions
-T0 = 0.
-
-# Boundary conditions
-
-# Wall temperature: [[S, N]
-#                   [W, E]], NAN = symmetry
-Twall = [[NAN, NAN],
-         [5, -5]]
+g = 10.
 
 
 # Visualization ----------------------------------------------------------------
@@ -320,14 +325,12 @@ def buildSecondDerivative1d(n, direction, wallBC, dirichletBetweenNodes):
 def solveMomentumEquation(
         us, vs, un, vn, uc, vc, ucorn, vcorn, T, Tref, dt, dx, dy,
         nu, beta, g, A_u, A_v, rhs_u, rhs_v, rhs_u_bound, rhs_v_bound,
-        solver, tol, ml_u, ml_v, M_u, M_v, solveEnergy):
+        solver, tol, ml_u, ml_v, M_u, M_v, solveEnergy, gamma):
 
     udh = np.diff(us, axis=1)/2
     udv = np.diff(us, axis=0)/2
     vdv = np.diff(vs, axis=0)/2
     vdh = np.diff(vs, axis=1)/2
-
-    gamma = 0
 
     # Non-linear terms
     Fu = 1/(dx)*np.diff(uc[1:-1, :]*uc[1:-1, :] -
@@ -398,16 +401,21 @@ def correctPressure(us, vs, p, T, A, rhs_p, rhs_p_bound, rho, g, beta,
     return u, v, p, rhs_p
 
 
-def solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a):
+def solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, gamma):
 
     # Interpolate temperature on staggered x and y face positions
     Tfx = avg(T, 1)
     Tfy = avg(T, 0)
+    Tdx = np.diff(T, axis=1)/2
+    Tdy = np.diff(T, axis=0)/2
+
+    uT = u[1:-1, :]*Tfx[1:-1, :] - gamma*np.abs(u[1:-1, :])*Tdx[1:-1, :]
+    vT = v[:, 1:-1]*Tfy[:, 1:-1] - gamma*np.abs(v[:, 1:-1])*Tdy[:, 1:-1]
 
     # Solve energy equation
     T[1:-1, 1:-1] = Tn[1:-1, 1:-1] - dt*(
-        1/dx*np.diff(u[1:-1, :]*Tfx[1:-1, :], axis=1) +
-        1/dy*np.diff(v[:, 1:-1]*Tfy[:, 1:-1], axis=0)) + \
+        1/dx*np.diff(uT, axis=1) +
+        1/dy*np.diff(vT, axis=0)) + \
         dt*a*(
             1/dx**2*(Tn[1:-1, 2:]-2*Tn[1:-1, 1:-1]+Tn[1:-1, :-2]) +
             1/dy**2*(Tn[2:, 1:-1]-2*Tn[1:-1, 1:-1]+Tn[:-2, 1:-1]))
@@ -546,6 +554,11 @@ T = T0*np.ones((ny+2, nx+2))
 # Material properties
 nu = mu/rho
 a = k/(rho*c)
+# Dimensionless numbers
+Pr = nu/a
+Tb = np.array(Twall)[~np.isnan(Twall)]
+RaLx = g*beta*(np.max(Tb)-np.min(Tb))*(xmax-xmin)**3/(nu*a)
+RaLy = g*beta*(np.max(Tb)-np.min(Tb))*(ymax-ymin)**3/(nu*a)
 # Constant boundaries
 # West
 u[:, 0] = uWall[1][0]
@@ -570,38 +583,40 @@ rhs_v_bound = np.zeros((ny-1, nx))
 
 # Generate system matrices------------------------------------------------------
 
-# Poisson equation for pressure
-[A_p, rhs_p_bound] = buildPoissonEquation(nx, ny, dx, dy,
-                                          pWall, (True, True))
-# Set zero pressure at boundary nodes in SW corner, if only Neumann boundaries
-if np.all(np.isnan(pWall)):
-    A_p[0, 0] = 3/2*A_p[0, 0]
+if solveMomentum:
+    # Poisson equation for pressure
+    [A_p, rhs_p_bound] = buildPoissonEquation(nx, ny, dx, dy,
+                                              pWall, (True, True))
+    # Zero pressure at boundary nodes in SW corner, if only Neumann boundaries
+    if np.all(np.isnan(pWall)):
+        A_p[0, 0] = 3/2*A_p[0, 0]
 
-# Poisson equation for u velocity
-[A_u, rhs_u_bound] = buildPoissonEquation(nx-1, ny, dx, dy,
-                                          uWall, (True, False))
-# Build equation system u** - nu*dt*laplace(u**) = u*
-A_u = sps.eye((nx-1)*ny) + dt*nu*A_u
-rhs_u_bound = dt*nu*rhs_u_bound
+    # Poisson equation for u velocity
+    [A_u, rhs_u_bound] = buildPoissonEquation(nx-1, ny, dx, dy,
+                                              uWall, (True, False))
+    # Build equation system u** - nu*dt*laplace(u**) = u*
+    A_u = sps.eye((nx-1)*ny) + dt*nu*A_u
+    rhs_u_bound = dt*nu*rhs_u_bound
 
-# Poisson equation for v velocity
-[A_v, rhs_v_bound] = buildPoissonEquation(nx, ny-1, dx, dy,
-                                          vWall, (False, True))
-# Build equation system v** - nu*dt*laplace(v**) = v*
-A_v = sps.eye(nx*(ny-1)) + dt*nu*A_v
-rhs_v_bound = dt*nu*rhs_v_bound
+    # Poisson equation for v velocity
+    [A_v, rhs_v_bound] = buildPoissonEquation(nx, ny-1, dx, dy,
+                                              vWall, (False, True))
+    # Build equation system v** - nu*dt*laplace(v**) = v*
+    A_v = sps.eye(nx*(ny-1)) + dt*nu*A_v
+    rhs_v_bound = dt*nu*rhs_v_bound
 
-# Algebraic Multigrid (AMG) as preconditioner
-if solver in ['amg', 'amg_precond_bicgstab']:
-    import pyamg
-if solver in ['amg', 'amg_precond_bicgstab']:
-    ml_p = pyamg.smoothed_aggregation_solver(A_p, max_coarse=10)
-    ml_u = pyamg.smoothed_aggregation_solver(A_u, max_coarse=10)
-    ml_v = pyamg.smoothed_aggregation_solver(A_v, max_coarse=10)
-if solver == 'amg_precond_bicgstab':
-    M_p = ml_p.aspreconditioner(cycle='V')
-    M_u = ml_u.aspreconditioner(cycle='V')
-    M_v = ml_v.aspreconditioner(cycle='V')
+    # Algebraic Multigrid (AMG) as preconditioner
+    if solver in ['amg', 'amg_precond_bicgstab']:
+        import pyamg
+    if solver in ['amg', 'amg_precond_bicgstab']:
+        ml_p = pyamg.smoothed_aggregation_solver(A_p, max_coarse=10)
+        ml_u = pyamg.smoothed_aggregation_solver(A_u, max_coarse=10)
+        ml_v = pyamg.smoothed_aggregation_solver(A_v, max_coarse=10)
+    if solver == 'amg_precond_bicgstab':
+        M_p = ml_p.aspreconditioner(cycle='V')
+        M_u = ml_u.aspreconditioner(cycle='V')
+        M_v = ml_v.aspreconditioner(cycle='V')
+
 
 # Time stepping ================================================================
 
@@ -616,28 +631,30 @@ while t - tMax < -1e-9:
     n += 1
     t += dt
 
-    # Update variables
-    pn = p.copy()
-    un, vn, us, vs = u.copy(), v.copy(), u.copy(), v.copy()
-    Tn = T.copy()
+    if solveMomentum:
+        # Update variables
+        pn = p.copy()
+        un, vn, us, vs = u.copy(), v.copy(), u.copy(), v.copy()
 
-    # Projection method: Intermediate velocity field U*
-    [us, vs, rhs_u, rhs_v] = solveMomentumEquation(
-        us, vs, un, vn, uc, vc, ucorn, vcorn, T, Tref, dt, dx, dy,
-        nu, beta, g, A_u, A_v, rhs_u, rhs_v, rhs_u_bound, rhs_v_bound,
-        solver, tol_U, ml_u, ml_v, M_u, M_v, solveEnergy)
+        # Projection method: Intermediate velocity field U*
+        [us, vs, rhs_u, rhs_v] = solveMomentumEquation(
+            us, vs, un, vn, uc, vc, ucorn, vcorn, T, Tref, dt, dx, dy,
+            nu, beta, g, A_u, A_v, rhs_u, rhs_v, rhs_u_bound, rhs_v_bound,
+            solver, tol_U, ml_u, ml_v, M_u, M_v, solveEnergy, gamma)
 
-    # Projection method: Pressure correction
-    [u, v, p, rhs_p] = correctPressure(
-        us, vs, p, T, A_p, rhs_p, rhs_p_bound,
-        rho, g, beta, dt, dx, dy, solver, tol_p, ml_p, M_p, solveEnergy)
+        # Projection method: Pressure correction
+        [u, v, p, rhs_p] = correctPressure(
+            us, vs, p, T, A_p, rhs_p, rhs_p_bound,
+            rho, g, beta, dt, dx, dy, solver, tol_p, ml_p, M_p, solveEnergy)
 
-    # Interpolate velocity on internal and boundary values for non-linear terms
-    [u, v, uc, vc, ucorn, vcorn] = interpolateVelocities(u, v, uWall, vWall)
+        # Interpolate velocity on internal & boundary values f. non-linear terms
+        [u, v, uc, vc, ucorn, vcorn] = interpolateVelocities(u, v, uWall, vWall)
 
     if solveEnergy:
+        # Advance temperature
+        Tn = T.copy()
         # Solve energy equation
-        T = solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a)
+        T = solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, gamma)
         # Interpolate temperature on boundaries for non-linear and source terms
         T = interpolateCellCenteredOnBoundary(T, Twall)
 
@@ -645,13 +662,14 @@ while t - tMax < -1e-9:
 
     if (t-tOut) > -1e-6:
 
-        # Calculate residuals
-        Res_u = np.linalg.norm(rhs_u.ravel()-A_u*us[1:-1, 1:-1].ravel()) / (
-            np.linalg.norm(rhs_u.ravel())+1e-12)
-        Res_v = np.linalg.norm(rhs_v.ravel()-A_v*vs[1:-1, 1:-1].ravel()) / (
-            np.linalg.norm(rhs_v.ravel())+1e-12)
-        Res_p = np.linalg.norm(rhs_p.ravel()-A_p*p[1:-1, 1:-1].ravel()) / (
-            np.linalg.norm(rhs_p.ravel())+1e-12)
+        if solveMomentum:
+            # Calculate residuals
+            Res_u = np.linalg.norm(rhs_u.ravel()-A_u*us[1:-1, 1:-1].ravel()) / (
+                np.linalg.norm(rhs_u.ravel())+1e-12)
+            Res_v = np.linalg.norm(rhs_v.ravel()-A_v*vs[1:-1, 1:-1].ravel()) / (
+                np.linalg.norm(rhs_v.ravel())+1e-12)
+            Res_p = np.linalg.norm(rhs_p.ravel()-A_p*p[1:-1, 1:-1].ravel()) / (
+                np.linalg.norm(rhs_p.ravel())+1e-12)
 
         # Calculate derived quantities
         [Uc, Ucorn, uMax, vMax, divU, Pe_nu_u, Pe_nu_v,
@@ -661,20 +679,25 @@ while t - tMax < -1e-9:
         print("==============================================================")
         print("Time step n = %d, t = %8.3f, dt = %4.1e, t_wall = %4.1f" %
               (n, t, dt, time.time()-twall0))
-        print("max|u| = %5.2e, CFL(u) = %5.2f, Pe(u) = %5.2f, Vis(x) = %5.2f" %
-              (uMax, CFL_u, Pe_nu_u, Vis_x))
-        print("max|v| = %5.2e, CFL(v) = %5.2f, Pe(v) = %5.2f, Vis(y) = %5.2f" %
-              (vMax, CFL_v, Pe_nu_v, Vis_y))
+        if solveMomentum:
+            print("max|u| = %4.2e, CFL(u) = %5.2f, "
+                  "Pe(u) = %5.2f, Vis(x) = %5.2f" %
+                  (uMax, CFL_u, Pe_nu_u, Vis_x))
+            print("max|v| = %4.2e, CFL(v) = %5.2f, "
+                  "Pe(v) = %5.2f, Vis(y) = %5.2f" %
+                  (vMax, CFL_v, Pe_nu_v, Vis_y))
+            print("Res(p) = %5.2e, Res(u) = %5.2e, Res(v) = %5.2e" %
+                  (Res_p, Res_u, Res_v))
+            print("ddt(p) = %5.2e, ddt(u) = %5.2e, ddt(v) = %5.2e" %
+                  (np.linalg.norm((p-pn)/dt),
+                   np.linalg.norm((u-un)/dt),
+                   np.linalg.norm((v-vn)/dt)))
         if solveEnergy:
             print("Fo(x) = %5.2f, Fo(y) = %5.2f, "
                   "Pe(a,u) = %5.2f, Pe(a,v) = %5.2f" %
                   (Fo_x, Fo_y, Pe_a_u, Pe_a_v))
-        print("Res(p) = %5.2e, Res(u) = %5.2e, Res(v) = %5.2e" %
-              (Res_p, Res_u, Res_v))
-        print("ddt(p) = %5.2e, ddt(u) = %5.2e, ddt(v) = %5.2e" %
-              (np.linalg.norm((p-pn)/dt),
-               np.linalg.norm((u-un)/dt),
-               np.linalg.norm((v-vn)/dt)))
+            print("Pr = %5.2f, Ra(Lx) = %4.1e, Ra(Ly) = %4.1e" %
+                  (Pr, RaLx, RaLy))
 
         tOut += dtOut
 
@@ -682,9 +705,10 @@ while t - tMax < -1e-9:
 
     if (t-tPlot) > -1e-6:
 
-        # Interpolate pressure on corners and boundaries for plotting
-        p = interpolateCellCenteredOnBoundary(p, pWall)
-        [p, pcorn] = interpolateCellCenteredOnCorners(p, pWall)
+        if solveMomentum:
+            # Interpolate pressure on corners and boundaries for plotting
+            p = interpolateCellCenteredOnBoundary(p, pWall)
+            [p, pcorn] = interpolateCellCenteredOnCorners(p, pWall)
 
         if solveEnergy:
             # Interpolate temperature on corners for plotting
