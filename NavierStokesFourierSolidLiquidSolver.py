@@ -58,8 +58,8 @@ v0 = 0
 
 # Wall x-velocity: [[S, N]
 #                   [W, E]], NAN = symmetry
-uWall = [[0., 0.],
-         [0., 0.]]
+uWall = [[0., 0],
+         [0., 0]]
 # Wall y-velocity: [[S, N]
 #                   [W, E]], NAN = symmetry
 vWall = [[0., 0.],
