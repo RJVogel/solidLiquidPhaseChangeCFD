@@ -11,7 +11,6 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import time
-from drawnow import drawnow
 from pathlib import Path
 from scipy import sparse as sp
 import scipy.sparse.linalg as spla
@@ -37,11 +36,11 @@ T0 = 27.
 # Wall temperature: [W, E, S, N], np.nan = symmetry
 Twall = [38, np.nan, np.nan, np.nan]
 # Wall x-velocity: [W, E, S, N], np.nan = symmetry
-uWall = [0., 0., 0., np.nan]
+uWall = [0., 0., 0., 0]
 # Wall y-velocity: [W, E, S, N], np.nan = symmetry
 vWall = [0., 0., 0., 0.]
 # Pressure: [W, E, S, N], np.nan = symmetry
-pWall = [np.nan, np.nan, np.nan, 0]
+pWall = [np.nan, np.nan, np.nan, np.nan]
 
 # Physical constants
 g = 9.81
@@ -55,7 +54,7 @@ mu = 0.003543
 nu = mu/rho
 beta = 8.9e-4
 Tref = 28.
-Tm = 28.
+Tm = 26.
 L = 242454.
 
 # Model parameters
@@ -122,6 +121,8 @@ A = sp.csr_matrix((nx*ny, nx*ny))
 
 
 def animateContoursAndVelocityVectors():
+
+    fig = plt.figure(figsize=figureSize, dpi=100)
 
     # plot temperature and pressure
     # Axis
@@ -411,7 +412,6 @@ def solveEnergyEquation(T, Tn, u, v, dt, dx, dy, a, Twall, cMod):
 
 # Create figure
 plt.close('all')
-fig = plt.figure(figsize=figureSize, dpi=100)
 
 # Time stepping
 twall0 = time.time()
@@ -496,6 +496,6 @@ while t < tMax:
         print(" max|v| = %3.1e, CFL(v) = %3.1f, Pe(v) = %4.1f, RaH = %3.1e" %
               (vMax, CFL_v, Pe_v, RaH))
 
-        drawnow(animateContoursAndVelocityVectors)
+        animateContoursAndVelocityVectors()
 
         tOut += dtOut
