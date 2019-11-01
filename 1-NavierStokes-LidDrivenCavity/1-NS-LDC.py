@@ -214,6 +214,8 @@ def animateContoursAndVelocityVectors(inlineGraphics, plotContourVar,
 def solveMomentumEquation(
         u, v, uc, vc, ucorn, vcorn, dt, dx, dy, nu, gamma):
 
+    us, vs = u.copy(), v.copy()
+
     # Non-linear terms
     Fu = 1/dx*np.diff(uc[1:-1, :]*uc[1:-1, :], axis=1) + \
         1/dy*np.diff(vcorn[:, 1:-1]*ucorn[:, 1:-1], axis=0)
@@ -235,27 +237,27 @@ def solveMomentumEquation(
     return us, vs
 
 
-def correctPressure(us, vs, p, rho, dt, dx, dy, rhs_p, pWall):
+def correctPressure(us, vs, p, rho, dt, dx, dy, rhs_p, pWall, nit):
 
     # Interpolations
     uahv = avg(avg(us, 1), 0)
     vavh = avg(avg(vs, 0), 1)
 
     # Right hand side for iterative solution
-    rhs_p[1:-1, 1:-1] = rho*(
-        1/dt*((u[1:-1, 1:] - u[1:-1, :-1])/(2*dx) +
-              (v[1:, 1:-1] - v[:-1, 1:-1])/(2*dy)) -
-        (((u[1:-1, 1:] - u[1:-1, :-1])/(2*dx))**2 +
-         2*((uahv[1:, :] - uahv[:-1, :])/(2*dy) *
-            (vavh[:, 1:] - vavh[:, :-1])/(2*dx)) +
-         ((v[1:, 1:-1] - v[:-1, 1:-1])/(2*dy))**2))
+    rhs_p = rho*(
+        1/dt*((u[1:-1, 1:] - u[1:-1, :-1])/dx +
+              (v[1:, 1:-1] - v[:-1, 1:-1])/dy) -
+        (((u[1:-1, 1:] - u[1:-1, :-1])/dx)**2 +
+         2*((uahv[1:, :] - uahv[:-1, :])/dy *
+            (vavh[:, 1:] - vavh[:, :-1])/dx) +
+         ((v[1:, 1:-1] - v[:-1, 1:-1])/dy)**2))
 
     # Solve iteratively for pressure
     for nit in range(50):
 
         p[1:-1, 1:-1] = (dy**2*(p[1:-1, 2:]+p[1:-1, :-2]) +
                          dx**2*(p[2:, 1:-1]+p[:-2, 1:-1]) -
-                         rhs_p[1:-1, 1:-1]*dx**2*dy**2)/(2*(dx**2+dy**2))
+                         rhs_p*dx**2*dy**2)/(2*(dx**2+dy**2))
 
         # Interpolate solution on boundaries
         p = interpolateCellCenteredOnBoundary(p, pWall)
@@ -431,7 +433,7 @@ while t - tMax < -1e-9:
         un, vn, uc, vc, ucorn, vcorn, dt, dx, dy, nu, gamma)
 
     # Projection method: Pressure correction
-    [u, v, p] = correctPressure(us, vs, p, rho, dt, dx, dy)
+    [u, v, p] = correctPressure(us, vs, p, rho, dt, dx, dy, rhs_p, pWall, nit)
 
     # Interpolate velocity on internal & boundary values f. non-linear terms
     [u, v, uc, vc, ucorn, vcorn] = interpolateVelocities(u, v, uWall, vWall)
@@ -442,7 +444,7 @@ while t - tMax < -1e-9:
 
         # Calculate derived quantities
         [Uc, Ucorn, uMax, vMax, divU, Pe_nu_u, Pe_nu_v,
-         Pe_a_u, Pe_a_v, CFL_u, CFL_v, Vis_x, Vis_y, Fo_x, Fo_y] = \
+         CFL_u, CFL_v, Vis_x, Vis_y] = \
             calcDerived(Xf, Yf, p, u, v, dx, dy, nu, dt)
 
         print("==============================================================")
