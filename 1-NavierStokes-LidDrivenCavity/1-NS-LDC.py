@@ -19,10 +19,10 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # Configuration and initialization =============================================
 
+# Discretization ---------------------------------------------------------------
+
 # Constants
 NAN = np.nan
-
-# Discretization ---------------------------------------------------------------
 
 # Geometry
 xmin = 0.
@@ -36,7 +36,7 @@ dy = 0.05
 
 # Temporal discretization
 tMax = 5.
-dt = 0.05
+dt = 0.005
 
 # Solver settings
 nit = 50  # iterations of pressure poisson equation
@@ -80,7 +80,7 @@ mu = 0.05
 # Output control
 
 # Print step
-dtOut = 1.0
+dtOut = tMax/10
 # Plot step
 dtPlot = tMax
 
@@ -95,12 +95,12 @@ inlineGraphics = True
 plotContourVar = 'p'  # 'p', u, v, 'U', 'divU'
 plotFaceValues = True
 plotVelocityVectorsEvery = 1
-plotLevels = (-1, 1)
+plotLevels = (None, None)
 colormap = 'bwr'
 
 # Save to file
 saveFiguresToFile = False
-figureFilename = 'liddrivencavity_Re100'
+figureFilename = 'liddrivencavity_Re20'
 
 # Profile
 writeProfile = False
@@ -216,11 +216,20 @@ def solveMomentumEquation(
 
     us, vs = u.copy(), v.copy()
 
+    udh = np.diff(us, axis=1)/2
+    udv = np.diff(us, axis=0)/2
+    vdv = np.diff(vs, axis=0)/2
+    vdh = np.diff(vs, axis=1)/2
+
     # Non-linear terms
-    Fu = 1/dx*np.diff(uc[1:-1, :]*uc[1:-1, :], axis=1) + \
-        1/dy*np.diff(vcorn[:, 1:-1]*ucorn[:, 1:-1], axis=0)
-    Fv = 1/dx*np.diff(ucorn[1:-1, :]*vcorn[1:-1, :], axis=1) + \
-        1/dy*np.diff(vc[:, 1:-1]*vc[:, 1:-1], axis=0)
+    Fu = 1/(dx)*np.diff(uc[1:-1, :]*uc[1:-1, :] -
+                        gamma*np.abs(uc[1:-1, :])*udh[1:-1, :], axis=1) + \
+        1/(dy)*np.diff(vcorn[:, 1:-1]*ucorn[:, 1:-1] -
+                       gamma*np.abs(vcorn[:, 1:-1]*udv[:, 1:-1]), axis=0)
+    Fv = 1/(dx)*np.diff(ucorn[1:-1, :]*vcorn[1:-1, :] -
+                        gamma*np.abs(ucorn[1:-1, :])*vdh[1:-1, :], axis=1) + \
+        1/(dy)*np.diff(vc[:, 1:-1]*vc[:, 1:-1] -
+                       gamma*np.abs(vc[:, 1:-1])*vdv[:, 1:-1], axis=0)
 
     # Diffusive terms
     Du = nu * (
@@ -255,6 +264,10 @@ def correctPressure(us, vs, p, rho, dt, dx, dy, rhs_p, pWall, nit):
     # Solve iteratively for pressure
     for nit in range(50):
 
+        # Force constant pressure in SW corner
+        p[1, 1] = 0
+
+        # Iterative solution of pressure
         p[1:-1, 1:-1] = (dy**2*(p[1:-1, 2:]+p[1:-1, :-2]) +
                          dx**2*(p[2:, 1:-1]+p[:-2, 1:-1]) -
                          rhs_p*dx**2*dy**2)/(2*(dx**2+dy**2))
