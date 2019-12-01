@@ -28,20 +28,20 @@ NAN = np.nan
 
 # Geometry
 xmin = 0.
-xmax = 0.02
+xmax = 1.
 ymin = 0.
-ymax = 0.02
+ymax = 1.
 
 # Spatial discretization
-dx = 0.0005
-dy = 0.0005
+dx = 0.05
+dy = 0.05
 
 # Temporal discretization
-tMax = 1
-dt = 0.00025
+tMax = 5.
+dt = 0.005
 
 # Upwind discretization
-gamma = 1
+gamma = 1.
 
 
 # Momentum equations -----------------------------------------------------------
@@ -50,20 +50,20 @@ gamma = 1
 solveMomentum = True
 
 # Initial conditions
-p0 = 0
-u0 = 0
-v0 = 0
+p0 = 0.
+u0 = 0.
+v0 = 0.
 
 # Boundary conditions
 
 # Wall x-velocity: [[S, N]
 #                   [W, E]], NAN = symmetry
-uWall = [[0., 0],
-         [0., 0]]
+uWall = [[0., 1.],
+         [0., 0.]]
 # Wall y-velocity: [[S, N]
 #                   [W, E]], NAN = symmetry
 vWall = [[0., 0.],
-         [1., 0.]]
+         [0., 0.]]
 # Wall pressure: [[S, N]
 #                 [W, E]], NAN = symmetry
 pWall = [[NAN, NAN],
@@ -72,9 +72,9 @@ pWall = [[NAN, NAN],
 # Material properties
 
 # Density
-rho = 820.733
+rho = 1.
 # Kinematic viscosity
-mu = 0.003543
+mu = 0.05
 
 # Solver: amg, amg_precond_bicgstab, direct
 solver = 'amg_precond_bicgstab'
@@ -144,7 +144,7 @@ Cmush = 1e9
 # Print step
 dtOut = max(dt, tMax/10)
 # Plot step
-dtPlot = dtOut
+dtPlot = tMax
 
 # Plots
 
@@ -155,7 +155,7 @@ inlineGraphics = True
 
 # Plot definition
 plotContourVar = 'p'  # 'p', u, v, 'U', 'divU', 'T'
-plotFaceValues = False
+plotFaceValues = True
 plotVelocityVectorsEvery = 1
 plotLevels = (None, None)
 colormap = 'bwr'

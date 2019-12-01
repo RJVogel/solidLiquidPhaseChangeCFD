@@ -19,10 +19,10 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # Configuration and initialization =============================================
 
-# Discretization ---------------------------------------------------------------
-
 # Constants
 NAN = np.nan
+
+# Discretization ---------------------------------------------------------------
 
 # Geometry
 xmin = 0.
@@ -42,15 +42,15 @@ dt = 0.005
 nit = 50  # iterations of pressure poisson equation
 
 # Upwind discretization
-gamma = 1
+gamma = 1.
 
 
 # Momentum equations -----------------------------------------------------------
 
 # Initial conditions
-p0 = 0
-u0 = 0
-v0 = 0
+p0 = 0.
+u0 = 0.
+v0 = 0.
 
 # Boundary conditions
 
@@ -80,7 +80,7 @@ mu = 0.05
 # Output control
 
 # Print step
-dtOut = tMax/10
+dtOut = max(dt, tMax/10)
 # Plot step
 dtPlot = tMax
 
