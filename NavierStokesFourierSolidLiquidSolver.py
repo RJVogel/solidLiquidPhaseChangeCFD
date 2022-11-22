@@ -28,20 +28,21 @@ NAN = np.nan
 
 # Geometry
 xmin = 0.
-xmax = 0.02
+xmax = 5.
 ymin = 0.
-ymax = 0.02
+ymax = 5.
 
 # Spatial discretization
-dx = 0.0005
-dy = 0.0005
+dx = 0.1
+dy = 0.1
 
 # Temporal discretization
-tMax = 1
-dt = 0.00025
+tMax = 3600.
+nPlot = 36
+dt = 0.2
 
 # Upwind discretization
-gamma = 1
+gamma = 0.5
 
 
 # Momentum equations -----------------------------------------------------------
@@ -58,12 +59,12 @@ v0 = 0
 
 # Wall x-velocity: [[S, N]
 #                   [W, E]], NAN = symmetry
-uWall = [[0., 0.],
+uWall = [[0., NAN],
          [0., 0.]]
 # Wall y-velocity: [[S, N]
 #                   [W, E]], NAN = symmetry
 vWall = [[0., 0.],
-         [1., 0.]]
+         [0., 0.]]
 # Wall pressure: [[S, N]
 #                 [W, E]], NAN = symmetry
 pWall = [[NAN, NAN],
@@ -72,9 +73,9 @@ pWall = [[NAN, NAN],
 # Material properties
 
 # Density
-rho = 820.733
+rho = 1.2
 # Kinematic viscosity
-mu = 0.003543
+mu = 0.0000135
 
 # Solver: amg, amg_precond_bicgstab, direct
 solver = 'amg_precond_bicgstab'
@@ -85,27 +86,27 @@ tol_U = 1e-6
 # Energy equation --------------------------------------------------------------
 
 # Solve energy equation?
-solveEnergy = False
+solveEnergy = True
 
 # Initial conditions
-T0 = 27
+T0 = 20
 
 # Boundary conditions
 # Wall temperature: [[S, N]
 #                   [W, E]], NAN = symmetry
 Twall = [[NAN, NAN],
-         [38, 28]]
+         [NAN, 19]]
 
 # Material properties
 
 # Specific heat capacity
-c = 2078.04
+c = 1005
 # Thermal conductivity
-k = 0.151215
+k = 0.025
 # Thermal expansion coefficient
-beta = 8.9e-4
+beta = 0.00369
 # Reference temperature for linearized buoyancy term (Boussinesq)
-Tref = 28.
+Tref = 20.
 
 # Physical constants
 g = 9.81
@@ -142,21 +143,22 @@ Cmush = 1e9
 # Output control
 
 # Print step
-dtOut = max(dt, tMax/10)
+dtOut = max(dt, tMax/nPlot)
 # Plot step
 dtPlot = dtOut
 
 # Plots
 
 # Figure size on screen
-figureSize = (7, 6)
+figureSize = (10, 10)
 # Use inline graphics
 inlineGraphics = True
 
 # Plot definition
-plotContourVar = 'p'  # 'p', u, v, 'U', 'divU', 'T'
-plotFaceValues = False
+plotContourVar = 'T'  # 'p', u, v, 'U', 'divU', 'T'
+plotFaceValues = True
 plotVelocityVectorsEvery = 1
+velScale = 2.
 plotLevels = (None, None)
 colormap = 'bwr'
 
@@ -269,7 +271,8 @@ def animateContoursAndVelocityVectors(inlineGraphics, plotContourVar,
         m0 = int(np.ceil(m/2)-1)
         ax1.quiver(X[1:-1, 1:-1][m0::m, m0::m], Y[1:-1, 1:-1][m0::m, m0::m],
                    uc[1:-1, :][m0::m, m0::m],
-                   vc[:, 1:-1][m0::m, m0::m])
+                   vc[:, 1:-1][m0::m, m0::m],
+                   scale=velScale)
 
     if fig is None or inlineGraphics:
         # Colorbar
@@ -698,14 +701,18 @@ if solveMomentum:
     # Algebraic Multigrid (AMG) as preconditioner
     if solver in ['amg', 'amg_precond_bicgstab']:
         import pyamg
-    if solver in ['amg', 'amg_precond_bicgstab']:
         ml_p = pyamg.smoothed_aggregation_solver(A_p, max_coarse=10)
         ml_u = pyamg.smoothed_aggregation_solver(A_u, max_coarse=10)
         ml_v = pyamg.smoothed_aggregation_solver(A_v, max_coarse=10)
-    if solver == 'amg_precond_bicgstab':
-        M_p = ml_p.aspreconditioner(cycle='V')
-        M_u = ml_u.aspreconditioner(cycle='V')
-        M_v = ml_v.aspreconditioner(cycle='V')
+        if solver == 'amg_precond_bicgstab':
+            M_p = ml_p.aspreconditioner(cycle='V')
+            M_u = ml_u.aspreconditioner(cycle='V')
+            M_v = ml_v.aspreconditioner(cycle='V')
+        else:
+            M_p, M_u, M_v = None, None, None
+    else:
+        ml_p, ml_u, ml_v = None, None, None
+        M_p, M_u, M_v = None, None, None
 
 
 # Time stepping ================================================================
